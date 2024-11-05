@@ -9,6 +9,7 @@ from peewee import (
 )
 from source_db import source_db
 from dest_db import dest_db
+from peewee import IntegrityError
 
 
 # Source Model
@@ -71,49 +72,104 @@ class DestinationUser(Model):
 
 
 def migrate_users():
-    ignored_rows = []  # List to keep track of ignored rows
+    ignored_rows = []  # List to keep track of ignored rows or errors
+    total_records = User.select().count()  # Get total number of records for reporting
 
-    for record in User.select():
-        try:
-            # Insert into the destination table
-            DestinationUser.insert(
-                {
-                    "name": record.full_name,  # Assuming full_name maps to name
-                    "email": record.email,
-                    "parent_id": None,  # Set as needed
-                    "email_verified_at": None,  # Set as needed
-                    "password": record.password,
-                    "username": record.username,
-                    "company": record.company,
-                    "status": "active",  # Default status
-                    "phone": None,  # Set as needed
-                    "mobile": record.mobile,
-                    "emirates": None,  # Set as needed
-                    "timezone": None,  # Set as needed
-                    "country": record.country,
-                    "state": None,  # Set as needed
-                    "remember_token": None,  # Set as needed
-                    "created_at": record.add_date,
-                    "updated_at": record.add_date,
-                }
-            ).execute()  # Execute the insert statement
+    # Establish connections if not already connected
+    if source_db.is_closed():
+        source_db.connect()
+    if dest_db.is_closed():
+        dest_db.connect()
 
-            print(f"Migrated User: {record.full_name}, {record.email}")
+    try:
+        with dest_db.atomic():  # Begin transaction
+            for record in User.select():
+                try:
+                    # Attempt to insert into the destination table
+                    DestinationUser.insert(
+                        {
+                            "name": record.full_name,
+                            "email": record.email,
+                            "parent_id": record.added_by_user_id,
+                            "email_verified_at": None,
+                            "password": record.password,
+                            "username": record.username,
+                            "company": record.company,
+                            "status": "active",
+                            "phone": None,
+                            "mobile": record.mobile,
+                            "emirates": None,
+                            "timezone": None,
+                            "country": record.country,
+                            "state": None,
+                            "remember_token": None,
+                            "created_at": record.add_date,
+                            "updated_at": record.add_date,
+                        }
+                    ).execute()  # Execute the insert statement
 
-        except Exception as e:
-            # Determine the reason for ignoring the record
-            reason = str(e)  # Get the error message
+                    print(f"Migrated User: {record.full_name}, {record.email}")
 
-            # Log the error message and the record that caused the error
-            print(f"Error migrating {record.full_name} ({record.email}): {reason}")
+                except IntegrityError as e:
+                    # Handle duplicate entries specifically
+                    if "Duplicate entry" in str(e):
+                        # Attempt to update the existing record instead
+                        try:
+                            print(
+                                f"Duplicate entry for {record.email}. Attempting to update..."
+                            )
+                            DestinationUser.update(
+                                {
+                                    "name": record.full_name,
+                                    "parent_id": record.added_by_user_id,
+                                    "password": record.password,
+                                    "username": record.username,
+                                    "company": record.company,
+                                    "status": "active",
+                                    "phone": None,
+                                    "mobile": record.mobile,
+                                    "country": record.country,
+                                    "updated_at": record.add_date,
+                                }
+                            ).where(
+                                DestinationUser.email == record.email
+                            ).execute()  # Execute the update statement
+                            print(
+                                f"Updated existing user: {record.full_name}, {record.email}"
+                            )
 
-            # Append the record and the reason to ignored_rows
-            ignored_rows.append((record, reason))  # Store tuple of record and reason
+                        except Exception as update_error:
+                            print(
+                                f"Error updating {record.full_name} ({record.email}): {update_error}"
+                            )
+                            ignored_rows.append((record, str(update_error)))
 
-    # Optionally print the ignored rows after migration
-    print("Ignored rows:")
-    for user, reason in ignored_rows:
-        print(f"- {user.full_name} ({user.email}): {reason}")
+                    else:
+                        print(
+                            f"IntegrityError for {record.full_name} ({record.email}): {e}"
+                        )
+                        ignored_rows.append((record, str(e)))
+
+                except Exception as e:
+                    print(f"Error migrating {record.full_name} ({record.email}): {e}")
+                    ignored_rows.append((record, str(e)))
+
+    finally:
+        # Close connections
+        if not source_db.is_closed():
+            source_db.close()
+        if not dest_db.is_closed():
+            dest_db.close()
+
+    # Summary of migration results
+    print(
+        f"Migration completed. Total records: {total_records}, Ignored rows: {len(ignored_rows)}"
+    )
+
+    if ignored_rows:
+        print("Ignored rows:")
+        for user, reason in ignored_rows:
+            print(f"- {user.full_name} ({user.email}): {reason}")
 
 
 # Call the function to start migration
