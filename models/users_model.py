@@ -46,7 +46,7 @@ class DestinationUser(Model):
         primary_key=True
     )  # Assuming this is auto-incremented by the DB
     name = CharField(max_length=255, null=False)
-    email = CharField(max_length=255, null=False, unique=True)
+    email = CharField(max_length=255, null=False)
     parent_id = BigIntegerField(null=True)
     email_verified_at = TimestampField(null=True)
     password = CharField(max_length=255, null=False)
@@ -71,28 +71,50 @@ class DestinationUser(Model):
 
 
 def migrate_users():
-    for record in User.select():
-        # Insert into the destination table
-        DestinationUser.insert(
-            {
-                "name": record.full_name,  # Assuming full_name maps to name
-                "email": record.email,
-                "parent_id": None,  # Set as needed
-                "email_verified_at": None,  # Set as needed
-                "password": record.password,
-                "username": record.username,
-                "company": record.company,
-                "status": "active",  # Default status
-                "phone": None,  # Set as needed
-                "mobile": record.mobile,
-                "emirates": None,  # Set as needed
-                "timezone": None,  # Set as needed
-                "country": record.country,
-                "state": None,  # Set as needed
-                "remember_token": None,  # Set as needed
-                "created_at": record.add_date,
-                "updated_at": record.add_date,
-            }
-        ).execute()  # Execute the insert statement
+    ignored_rows = []  # List to keep track of ignored rows
 
-        print(f"Migrated User: {record.full_name}, {record.email}")
+    for record in User.select():
+        try:
+            # Insert into the destination table
+            DestinationUser.insert(
+                {
+                    "name": record.full_name,  # Assuming full_name maps to name
+                    "email": record.email,
+                    "parent_id": None,  # Set as needed
+                    "email_verified_at": None,  # Set as needed
+                    "password": record.password,
+                    "username": record.username,
+                    "company": record.company,
+                    "status": "active",  # Default status
+                    "phone": None,  # Set as needed
+                    "mobile": record.mobile,
+                    "emirates": None,  # Set as needed
+                    "timezone": None,  # Set as needed
+                    "country": record.country,
+                    "state": None,  # Set as needed
+                    "remember_token": None,  # Set as needed
+                    "created_at": record.add_date,
+                    "updated_at": record.add_date,
+                }
+            ).execute()  # Execute the insert statement
+
+            print(f"Migrated User: {record.full_name}, {record.email}")
+
+        except Exception as e:
+            # Determine the reason for ignoring the record
+            reason = str(e)  # Get the error message
+
+            # Log the error message and the record that caused the error
+            print(f"Error migrating {record.full_name} ({record.email}): {reason}")
+
+            # Append the record and the reason to ignored_rows
+            ignored_rows.append((record, reason))  # Store tuple of record and reason
+
+    # Optionally print the ignored rows after migration
+    print("Ignored rows:")
+    for user, reason in ignored_rows:
+        print(f"- {user.full_name} ({user.email}): {reason}")
+
+
+# Call the function to start migration
+migrate_users()
