@@ -3,7 +3,7 @@
 from peewee import Model, CharField, ForeignKeyField
 from source_db import source_db
 from dest_db import dest_db
-from models.model_a import ModelA
+from models.users_model import ModelA
 from models.model_b import ModelB
 
 class ModelC(Model):
