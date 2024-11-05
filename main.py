@@ -2,7 +2,7 @@
 
 from source_db import source_db
 from dest_db import dest_db
-from models.model_a import migrate_model_a
+from models.model_a import User
 from models.model_b import migrate_model_b
 
 def migrate_data():
@@ -11,7 +11,7 @@ def migrate_data():
     dest_db.connect()
 
     try:
-        migrate_model_a()
+        User()
         migrate_model_b()
     
     except Exception as e:
