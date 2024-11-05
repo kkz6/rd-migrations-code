@@ -3,7 +3,10 @@
 from source_db import source_db
 from dest_db import dest_db
 from models.users_model import migrate_users
-from models.model_b import migrate_model_b
+from models.technicians_model import migrate_technicians
+from models.customers_model import migrate_customers
+from models.sales_people import migrate_sales_people
+from models.vehicles_model import migrate_vehicles
 
 def migrate_data():
     # Connect to the source and destination databases
@@ -11,8 +14,11 @@ def migrate_data():
     dest_db.connect()
 
     try:
-        migrate_users()
-        migrate_model_b()
+        # migrate_users()
+        # migrate_technicians()
+        # migrate_customers()
+        # migrate_sales_people()
+        migrate_vehicles()
     
     except Exception as e:
         print(f'Error occurred: {e}')
