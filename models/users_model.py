@@ -151,25 +151,25 @@ def migrate_users():
                             print(
                                 f"Duplicate entry for {record.email}. Attempting to update..."
                             )
-                            DestinationUser.update(
-                                {
-                                    "id": record.id,  # Use the same ID from the source
-                                    "name": record.full_name,
-                                    "parent_id": record.added_by_user_id,
-                                    "password": record.password,
-                                    "username": record.username,
-                                    "company": record.company,
-                                    "status": (
-                                        "active"
-                                        if record.activstate == 1
-                                        else "blocked"
-                                    ),
-                                    "phone": None,
-                                    "mobile": record.mobile,
-                                    "country": record.country,
-                                    "updated_at": record.add_date,
-                                }
-                            ).where(DestinationUser.email == record.email).execute()
+                            # DestinationUser.update(
+                            #     {
+                            #         "id": record.id,  # Use the same ID from the source
+                            #         "name": record.full_name,
+                            #         "parent_id": record.added_by_user_id,
+                            #         "password": record.password,
+                            #         "username": record.username,
+                            #         "company": record.company,
+                            #         "status": (
+                            #             "active"
+                            #             if record.activstate == 1
+                            #             else "blocked"
+                            #         ),
+                            #         "phone": None,
+                            #         "mobile": record.mobile,
+                            #         "country": record.country,
+                            #         "updated_at": record.add_date,
+                            #     }
+                            # ).where(DestinationUser.email == record.email).execute()
                             print(
                                 f"Updated existing user: {record.full_name}, {record.email}"
                             )

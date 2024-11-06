@@ -109,7 +109,6 @@ def migrate_devices():
     try:
         with dest_db.atomic():
             for record in EcuMaster.select():
-                print('tesseract')
                 try:
                     print(f"Migrating ECU {record.ecu}")
                     # Check if user exists
