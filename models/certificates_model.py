@@ -82,7 +82,40 @@ class Certificate(Model):
         table_name = "certificates"
 
 
+def clean_destination_table():
+    """
+    Clean up the destination table before migration.
+    Returns the number of records deleted.
+    """
+    try:
+        if dest_db.is_closed():
+            dest_db.connect()
+
+        with dest_db.atomic():
+            count_before = Certificate.select().count()
+            Certificate.delete().execute()
+            count_after = Certificate.select().count()
+            deleted_count = count_before - count_after
+
+            print(f"Cleanup Summary:")
+            print(f"Records before cleanup: {count_before}")
+            print(f"Records after cleanup: {count_after}")
+            print(f"Total records deleted: {deleted_count}")
+
+            return deleted_count
+
+    except Exception as e:
+        print(f"Error during cleanup: {str(e)}")
+        raise
+    finally:
+        if not dest_db.is_closed():
+            dest_db.close()
+
+
 def migrate_certificates():
+    """
+    Migrate certificates from source to destination database.
+    """
     ignored_rows = []
     total_records = CertificateRecord.select().count()
     migrated_count = 0
@@ -98,54 +131,61 @@ def migrate_certificates():
         with dest_db.atomic():
             for record in CertificateRecord.select():
                 try:
+                    print(f"Processing ECU {record.ecu}")
 
-                    Vehicle.insert(
-                        {
-                            "brand": record.vehicle_type,
-                            "vehicle_no": record.vehicle_registration,
-                            "vehicle_chassis_no": record.vehicle_chassis,
-                            "new_registration": False,  # Default value as per schema
-                        }
-                    ).execute()
+                    # Create vehicle record if it doesn't exist
+                    try:
+                        Vehicle.insert(
+                            {
+                                "brand": record.vehicle_type,
+                                "vehicle_no": record.vehicle_registration,
+                                "vehicle_chassis_no": record.vehicle_chassis,
+                                "new_registration": False,
+                            }
+                        ).execute()
+                        print(f"Created new vehicle record for ECU {record.ecu}")
+                    except IntegrityError:
+                        print(f"Vehicle already exists for ECU {record.ecu}")
 
-                    print(f"Migrating ECU {record.ecu}")
-                    # Check if related entities exist in the destination database
+                    # Check if related entities exist
                     installer_user = User.get_or_none(
                         User.id == record.installer_user_id
                     )
-
                     caliberater_user = User.get_or_none(
                         User.id == record.caliberater_user_id
                     )
-                    # installed_by = Technician.get_or_none(
-                    #     Technician.id == record.installer_technician_id
-                    # )
-                    # print("installed_by", installed_by)
-
                     installed_for = Customer.get_or_none(
                         Customer.id == record.customer_id
                     )
-
-                    # dealer = User.get_or_none(User.id == record.dealer_id)
                     device = Device.get_or_none(Device.ecu_number == record.ecu)
                     vehicle = Vehicle.get_or_none(
                         Vehicle.vehicle_chassis_no == record.vehicle_chassis
                     )
 
-                    if (
-                        not installer_user
-                        or not caliberater_user
-                        # or not installed_by
-                        # or not dealer
-                        or not device
-                        or not vehicle
-                    ):
-                        print(f"Skipping ECU {record.ecu} - related entity not found")
-                        ignored_rows.append((record, "Related entity not found"))
+                    # Convert speed value by removing any non-numeric characters
+                    speed_value = "".join(filter(str.isdigit, record.speed))
+                    speed_limit = int(speed_value) if speed_value else 0
+
+                    if not all([installer_user, caliberater_user, device, vehicle]):
+                        missing_entities = []
+                        if not installer_user:
+                            missing_entities.append("installer_user")
+                        if not caliberater_user:
+                            missing_entities.append("caliberater_user")
+                        if not device:
+                            missing_entities.append("device")
+                        if not vehicle:
+                            missing_entities.append("vehicle")
+
+                        error_msg = (
+                            f"Missing related entities: {', '.join(missing_entities)}"
+                        )
+                        print(f"Skipping ECU {record.ecu} - {error_msg}")
+                        ignored_rows.append((record, error_msg))
                         skipped_count += 1
                         continue
 
-                    # Attempt to insert into the destination table
+                    # Attempt to create certificate
                     Certificate.create(
                         serial_number=record.serialno,
                         status="active",
@@ -153,25 +193,24 @@ def migrate_certificates():
                         installation_date=record.date_actual_installation,
                         calibration_date=record.date_calibrate,
                         expiry_date=record.date_expiry,
-                        km_reading=0,
-                        speed_limit=int(record.speed),
+                        km_reading=record.kilometer or 0,
+                        speed_limit=speed_limit,
                         print_count=record.print_count,
                         renewal_count=record.renewal_count,
                         description=record.description,
-                        dealer_id=1,
-                        user_id=1,
+                        dealer_id=1,  # Default dealer ID
+                        user_id=1,  # Default user ID
                         created_at=current_time,
                         updated_at=current_time,
-                        installed_by_id=1,
-                        installed_for_id=installed_for.id,
+                        installed_by_id=1,  # Default technician ID
+                        installed_for_id=installed_for.id if installed_for else None,
                         vehicle_id=vehicle.id,
                     )
 
-                    print(f"Migrated Certificate: ECU {record.ecu}")
+                    print(f"Successfully migrated Certificate: ECU {record.ecu}")
                     migrated_count += 1
 
                 except IntegrityError as e:
-                    # Handle duplicate entries
                     if "Duplicate entry" in str(e):
                         try:
                             print(
@@ -183,7 +222,7 @@ def migrate_certificates():
                                     "installation_date": record.date_actual_installation,
                                     "calibration_date": record.date_calibrate,
                                     "expiry_date": record.date_expiry,
-                                    "km_reading": 0,
+                                    "km_reading": record.kilometer or 0,
                                     "speed_limit": int(record.speed),
                                     "print_count": record.print_count,
                                     "renewal_count": record.renewal_count,
@@ -192,7 +231,9 @@ def migrate_certificates():
                                     "user_id": record.updated_by_user_id,
                                     "updated_at": current_time,
                                     "installed_by_id": 1,
-                                    "installed_for_id": installed_for.id,
+                                    "installed_for_id": (
+                                        installed_for.id if installed_for else None
+                                    ),
                                     "vehicle_id": vehicle.id,
                                 }
                             ).where(
@@ -202,17 +243,20 @@ def migrate_certificates():
                             migrated_count += 1
 
                         except Exception as update_error:
-                            print(f"Error updating ECU {record.ecu}: {update_error}")
-                            ignored_rows.append((record, str(update_error)))
+                            error_msg = f"Error updating: {str(update_error)}"
+                            print(f"Error updating ECU {record.ecu}: {error_msg}")
+                            ignored_rows.append((record, error_msg))
                             skipped_count += 1
                     else:
-                        print(f"IntegrityError for ECU {record.ecu}: {e}")
-                        ignored_rows.append((record, str(e)))
+                        error_msg = f"IntegrityError: {str(e)}"
+                        print(f"IntegrityError for ECU {record.ecu}: {error_msg}")
+                        ignored_rows.append((record, error_msg))
                         skipped_count += 1
 
                 except Exception as e:
-                    print(f"Error migrating ECU {record.ecu}: {e}")
-                    ignored_rows.append((record, str(e)))
+                    error_msg = f"Unexpected error: {str(e)}"
+                    print(f"Error migrating ECU {record.ecu}: {error_msg}")
+                    ignored_rows.append((record, error_msg))
                     skipped_count += 1
 
     finally:
@@ -221,27 +265,42 @@ def migrate_certificates():
         if not dest_db.is_closed():
             dest_db.close()
 
-    # Summary of migration results
+    # Print migration summary
     print(f"\nMigration Summary:")
-    print(f"Total records: {total_records}")
+    print(f"Total records processed: {total_records}")
     print(f"Successfully migrated: {migrated_count}")
     print(f"Skipped/Failed: {skipped_count}")
+    print(f"Success rate: {(migrated_count/total_records)*100:.2f}%")
 
     if ignored_rows:
         print("\nDetailed error log:")
-        for device, reason in ignored_rows:
-            print(f"- ECU {device.ecu}: {reason}")
+        for record, reason in ignored_rows:
+            print(f"- ECU {record.ecu}: {reason}")
 
 
 def run_migration():
-    """Main function to run the migration"""
+    """Main function to run the cleanup and migration"""
     try:
-        print("\nStarting migration...")
+        # Ask for confirmation before cleanup
+        response = input(
+            "This will delete all existing records in the destination table. Are you sure? (yes/no): "
+        )
+        if response.lower() != "yes":
+            print("Migration cancelled.")
+            return
+
+        # Step 1: Clean the destination table
+        print("\nStep 1: Cleaning destination table...")
+        clean_destination_table()
+
+        # Step 2: Perform the migration
+        print("\nStep 2: Starting migration...")
         migrate_certificates()
 
     except Exception as e:
         print(f"Error during migration process: {str(e)}")
     finally:
+        # Ensure all database connections are closed
         if not source_db.is_closed():
             source_db.close()
         if not dest_db.is_closed():
