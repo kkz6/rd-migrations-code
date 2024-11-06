@@ -8,7 +8,7 @@ from dest_db import dest_db
 # from models.sales_people import run_migration
 # from models.vehicles_model import run_migration
 # from models.devices_model import run_migration
-from models.certificates_model import migrate_certificates
+from models.certificates_model import run_migration,migrate_certificates
 
 
 def migrate_data():
@@ -17,8 +17,7 @@ def migrate_data():
     dest_db.connect()
 
     try:
-        # run_migration()
-        migrate_certificates()
+        run_migration()
 
     except Exception as e:
         print(f"Error occurred: {e}")
