@@ -114,7 +114,7 @@ def clean_destination_table():
 
 def migrate_certificates():
     """
-    Migrate certificates from source to destination database.
+    Migrate certificates from source to destination database and update vehicle references.
     """
     ignored_rows = []
     total_records = CertificateRecord.select().count()
@@ -141,6 +141,9 @@ def migrate_certificates():
                                 "vehicle_no": record.vehicle_registration,
                                 "vehicle_chassis_no": record.vehicle_chassis,
                                 "new_registration": False,
+                                "created_at": current_time,
+                                "updated_at": current_time,
+                                "model": record.vehicle_type,
                             }
                         ).execute()
                         print(f"Created new vehicle record for ECU {record.ecu}")
@@ -185,73 +188,95 @@ def migrate_certificates():
                         skipped_count += 1
                         continue
 
-                    # Attempt to create certificate
-                    Certificate.create(
-                        serial_number=record.serialno,
-                        status="active",
-                        device_id=device.id,
-                        installation_date=record.date_actual_installation,
-                        calibration_date=record.date_calibrate,
-                        expiry_date=record.date_expiry,
-                        km_reading=record.kilometer or 0,
-                        speed_limit=speed_limit,
-                        print_count=record.print_count,
-                        renewal_count=record.renewal_count,
-                        description=record.description,
-                        dealer_id=1,  # Default dealer ID
-                        user_id=1,  # Default user ID
-                        created_at=current_time,
-                        updated_at=current_time,
-                        installed_by_id=1,  # Default technician ID
-                        installed_for_id=installed_for.id if installed_for else None,
-                        vehicle_id=vehicle.id,
-                    )
+                    # Create or update certificate
+                    try:
+                        certificate = Certificate.create(
+                            serial_number=record.serialno,
+                            status="active",
+                            device_id=device.id,
+                            installation_date=record.date_actual_installation,
+                            calibration_date=record.date_calibrate,
+                            expiry_date=record.date_expiry,
+                            km_reading=record.kilometer or 0,
+                            speed_limit=speed_limit,
+                            print_count=record.print_count,
+                            renewal_count=record.renewal_count,
+                            description=record.description,
+                            dealer_id=1,  # Default dealer ID
+                            user_id=1,  # Default user ID
+                            created_at=current_time,
+                            updated_at=current_time,
+                            installed_by_id=1,  # Default technician ID
+                            installed_for_id=(
+                                installed_for.id if installed_for else None
+                            ),
+                            vehicle_id=vehicle.id,
+                        )
 
-                    print(f"Successfully migrated Certificate: ECU {record.ecu}")
-                    migrated_count += 1
+                        # Update the vehicle with the certificate ID
+                        Vehicle.update(
+                            certificate_id=certificate.id, updated_at=current_time
+                        ).where(Vehicle.id == vehicle.id).execute()
 
-                except IntegrityError as e:
-                    if "Duplicate entry" in str(e):
-                        try:
-                            print(
-                                f"Duplicate entry for ECU {record.ecu}. Attempting to update..."
-                            )
-                            Certificate.update(
-                                {
-                                    "device_id": device.id,
-                                    "installation_date": record.date_actual_installation,
-                                    "calibration_date": record.date_calibrate,
-                                    "expiry_date": record.date_expiry,
-                                    "km_reading": record.kilometer or 0,
-                                    "speed_limit": int(record.speed),
-                                    "print_count": record.print_count,
-                                    "renewal_count": record.renewal_count,
-                                    "description": record.description,
-                                    "dealer_id": 1,
-                                    "user_id": record.updated_by_user_id,
-                                    "updated_at": current_time,
-                                    "installed_by_id": 1,
-                                    "installed_for_id": (
-                                        installed_for.id if installed_for else None
-                                    ),
-                                    "vehicle_id": vehicle.id,
-                                }
-                            ).where(
-                                Certificate.serial_number == record.serialno
-                            ).execute()
-                            print(f"Updated existing certificate: ECU {record.ecu}")
-                            migrated_count += 1
+                        print(
+                            f"Successfully migrated Certificate: ECU {record.ecu} and updated vehicle reference"
+                        )
+                        migrated_count += 1
 
-                        except Exception as update_error:
-                            error_msg = f"Error updating: {str(update_error)}"
-                            print(f"Error updating ECU {record.ecu}: {error_msg}")
+                    except IntegrityError as e:
+                        if "Duplicate entry" in str(e):
+                            try:
+                                # Get existing certificate
+                                existing_certificate = Certificate.get(
+                                    Certificate.serial_number == record.serialno
+                                )
+
+                                # Update existing certificate
+                                Certificate.update(
+                                    {
+                                        "device_id": device.id,
+                                        "installation_date": record.date_actual_installation,
+                                        "calibration_date": record.date_calibrate,
+                                        "expiry_date": record.date_expiry,
+                                        "km_reading": record.kilometer or 0,
+                                        "speed_limit": speed_limit,
+                                        "print_count": record.print_count,
+                                        "renewal_count": record.renewal_count,
+                                        "description": record.description,
+                                        "dealer_id": 1,
+                                        "user_id": record.updated_by_user_id,
+                                        "updated_at": current_time,
+                                        "installed_by_id": 1,
+                                        "installed_for_id": (
+                                            installed_for.id if installed_for else None
+                                        ),
+                                        "vehicle_id": vehicle.id,
+                                    }
+                                ).where(
+                                    Certificate.id == existing_certificate.id
+                                ).execute()
+
+                                # Update the vehicle with the certificate ID
+                                Vehicle.update(
+                                    certificate_id=existing_certificate.id,
+                                    updated_at=current_time,
+                                ).where(Vehicle.id == vehicle.id).execute()
+
+                                print(
+                                    f"Updated existing certificate: ECU {record.ecu} and vehicle reference"
+                                )
+                                migrated_count += 1
+
+                            except Exception as update_error:
+                                error_msg = f"Error updating: {str(update_error)}"
+                                print(f"Error updating ECU {record.ecu}: {error_msg}")
+                                ignored_rows.append((record, error_msg))
+                                skipped_count += 1
+                        else:
+                            error_msg = f"IntegrityError: {str(e)}"
+                            print(f"IntegrityError for ECU {record.ecu}: {error_msg}")
                             ignored_rows.append((record, error_msg))
                             skipped_count += 1
-                    else:
-                        error_msg = f"IntegrityError: {str(e)}"
-                        print(f"IntegrityError for ECU {record.ecu}: {error_msg}")
-                        ignored_rows.append((record, error_msg))
-                        skipped_count += 1
 
                 except Exception as e:
                     error_msg = f"Unexpected error: {str(e)}"
@@ -276,32 +301,3 @@ def migrate_certificates():
         print("\nDetailed error log:")
         for record, reason in ignored_rows:
             print(f"- ECU {record.ecu}: {reason}")
-
-
-def run_migration():
-    """Main function to run the cleanup and migration"""
-    try:
-        # Ask for confirmation before cleanup
-        response = input(
-            "This will delete all existing records in the destination table. Are you sure? (yes/no): "
-        )
-        if response.lower() != "yes":
-            print("Migration cancelled.")
-            return
-
-        # Step 1: Clean the destination table
-        print("\nStep 1: Cleaning destination table...")
-        clean_destination_table()
-
-        # Step 2: Perform the migration
-        print("\nStep 2: Starting migration...")
-        migrate_certificates()
-
-    except Exception as e:
-        print(f"Error during migration process: {str(e)}")
-    finally:
-        # Ensure all database connections are closed
-        if not source_db.is_closed():
-            source_db.close()
-        if not dest_db.is_closed():
-            dest_db.close()
