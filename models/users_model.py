@@ -125,7 +125,7 @@ def migrate_users():
                             "id": record.id,  # Use the same ID from the source
                             "name": record.full_name,
                             "email": record.email,
-                            "parent_id": record.added_by_user_id,
+                            # "parent_id": record.added_by_user_id,
                             "email_verified_at": None,
                             "password": record.password,
                             "username": record.username,
