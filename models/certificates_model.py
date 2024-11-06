@@ -1,3 +1,4 @@
+import tempfile
 from peewee import *
 from datetime import datetime
 from models.users_model import DestinationUser
@@ -160,19 +161,22 @@ def migrate_dealers(migration_state):
         # Migrate each dealer
         for dealer in DealerMaster.select():
             try:
-                # Generate a secure password for the dealer
-                temp_password = bcrypt.hashpw(
-                    f"temp_{dealer.id}_{current_time.timestamp()}".encode(),
-                    bcrypt.gensalt(),
-                ).decode()
+                # Generate a random salt
+                salt = bcrypt.gensalt()
+
+                # Hash the password using the salt
+                hashed_password = bcrypt.hashpw("password".encode(), salt)
+
+                username = dealer.company.lower().replace(" ", "_")
 
                 # Create user record for dealer
                 new_user = DestinationUser.create(
                     name=dealer.company,
                     email=dealer.email,
-                    password=temp_password,
-                    created_at=current_time,
-                    updated_at=current_time,
+                    password=hashed_password,
+                    username=username,
+                    mobile=dealer.mobile,
+                    company=dealer.company,
                 )
 
                 # Assign dealer role
@@ -209,19 +213,6 @@ def migrate_dealers(migration_state):
             dest_db.close()
 
 
-# To test the dealer mapping, you can add this debug function:
-def print_dealer_mapping(migration_state):
-    """
-    Print the current dealer ID mapping for debugging purposes.
-    """
-    mapping = migration_state.get_mapping()
-    print("\nDealer ID Mapping:")
-    print("Source ID -> Destination ID")
-    print("-" * 30)
-    for source_id, dest_id in mapping.items():
-        print(f"{source_id} -> {dest_id}")
-
-
 def clean_destination_table():
     """
     Clean up the destination table before migration.
@@ -252,7 +243,7 @@ def clean_destination_table():
             dest_db.close()
 
 
-def migrate_certificates(migration_state):
+def migrate_certificates(migration_state, log_file):
     """
     Migrate certificates from source to destination database and update vehicle references.
     """
@@ -297,7 +288,7 @@ def migrate_certificates(migration_state):
                                 "new_registration": False,
                                 "created_at": current_time,
                                 "updated_at": current_time,
-                                "model": record.vehicle_type,
+                                "model": record.vehicle_type,  # added vehicle_type here since no model in source
                             }
                         ).execute()
                         print(f"Created new vehicle record for ECU {record.ecu}")
@@ -308,9 +299,15 @@ def migrate_certificates(migration_state):
                     installer_user = DestinationUser.get_or_none(
                         DestinationUser.id == record.installer_user_id
                     )
+                    if not installer_user:
+                        installer_user = DestinationUser.get_by_id(1)
+
                     caliberater_user = DestinationUser.get_or_none(
                         DestinationUser.id == record.caliberater_user_id
                     )
+                    if not caliberater_user:
+                        caliberater_user = DestinationUser.get_by_id(1)
+
                     installed_for = Customer.get_or_none(
                         Customer.id == record.customer_id
                     )
@@ -323,12 +320,8 @@ def migrate_certificates(migration_state):
                     speed_value = "".join(filter(str.isdigit, record.speed))
                     speed_limit = int(speed_value) if speed_value else 0
 
-                    if not all([installer_user, caliberater_user, device, vehicle]):
+                    if not all([device, vehicle]):
                         missing_entities = []
-                        if not installer_user:
-                            missing_entities.append("installer_user")
-                        if not caliberater_user:
-                            missing_entities.append("caliberater_user")
                         if not device:
                             missing_entities.append("device")
                         if not vehicle:
@@ -445,16 +438,16 @@ def migrate_certificates(migration_state):
             dest_db.close()
 
     # Print migration summary
-    print(f"\nMigration Summary:")
-    print(f"Total records processed: {total_records}")
-    print(f"Successfully migrated: {migrated_count}")
-    print(f"Skipped/Failed: {skipped_count}")
-    print(f"Success rate: {(migrated_count/total_records)*100:.2f}%")
+    print(f"\nMigration Summary:", file=log_file)
+    print(f"Total records processed: {total_records}", file=log_file)
+    print(f"Successfully migrated: {migrated_count}", file=log_file)
+    print(f"Skipped/Failed: {skipped_count}", file=log_file)
+    print(f"Success rate: {(migrated_count/total_records)*100:.2f}%", file=log_file)
 
     if ignored_rows:
-        print("\nDetailed error log:")
+        print("\nDetailed error log:", file=log_file)
         for record, reason in ignored_rows:
-            print(f"- ECU {record.ecu}: {reason}")
+            print(f"- ECU {record.ecu}: {reason}", file=log_file)
 
 
 def run_migration():
@@ -470,18 +463,22 @@ def run_migration():
             print("Migration cancelled.")
             return
 
-        # Step 1: Clean the destination table
-        print("\nStep 1: Cleaning destination table...")
-        clean_destination_table()
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            print(
+                "\nStarting Migration for Certificates table. Logs written to:",
+                log_file.name,
+            )
 
-        # Step 2: Migrate dealers and get ID mapping
-        print("\nStep 2: Migrating dealers...")
-        migrate_dealers(migration_state)
-        print_dealer_mapping(migration_state)
+            print("\nStep 1: Cleaning destination table...")
+            clean_destination_table()
 
-        # Step 3: Perform the certificate migration with dealer mapping
-        print("\nStep 3: Migrating certificates...")
-        migrate_certificates(migration_state)
+            print("\nStep 2: Migrating dealers...")
+            migrate_dealers(migration_state)
+
+            print("\nStep 3: Migrating certificates...")
+            migrate_certificates(migration_state, log_file)
+
+            print("\nMigration complete. Logs written to:", log_file.name)
 
     except Exception as e:
         print(f"Error during migration process: {str(e)}")

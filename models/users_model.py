@@ -153,7 +153,6 @@ def migrate_users():
                             )
                             # DestinationUser.update(
                             #     {
-                            #         "id": record.id,  # Use the same ID from the source
                             #         "name": record.full_name,
                             #         "parent_id": record.added_by_user_id,
                             #         "password": record.password,
