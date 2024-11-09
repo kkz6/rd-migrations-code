@@ -11,7 +11,9 @@ from peewee import (
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
-from models.users_model import DestinationUser 
+from models.users_model import DestinationUser
+from id_mapping import user_id_mapper
+
 
 # Source Model
 class TechnicianMaster(Model):
@@ -59,10 +61,6 @@ def clean_destination_table():
             # Get the count before deletion
             count_before = Technician.select().count()
 
-            # Option 1: Soft delete (if you want to keep records but mark them as deleted)
-            # Technician.update(deleted_at=datetime.now()).execute()
-
-            # Option 2: Hard delete (completely remove records)
             Technician.delete().execute()
 
             count_after = Technician.select().count()
@@ -86,23 +84,19 @@ def clean_destination_table():
 def check_user_exists(user_id):
     """Check if a user exists in the destination database"""
     try:
-        return DestinationUser.get(DestinationUser.id == user_id)
+        mapped_user_id = user_id_mapper.get_dest_id(str(user_id))
+        if mapped_user_id:
+            return DestinationUser.get(DestinationUser.id == mapped_user_id)
     except DoesNotExist:
         return None
 
 
 def get_default_user():
     """Get or create a default user for cases where the original user doesn't exist"""
-    try:
-        # Try to get an admin user or any suitable default user
-        return DestinationUser.get(
-            DestinationUser.email == "service@autograde.ae"
-        )  # Replace with a known admin email
-    except DoesNotExist:
-        print(
-            "Warning: No default user found. Please ensure at least one admin user exists in the system."
-        )
-        return None
+
+    return DestinationUser.get(
+        DestinationUser.email == "service@autograde.ae"
+    )  # Replace with a known admin email
 
 
 def migrate_technicians():
@@ -119,6 +113,7 @@ def migrate_technicians():
 
     # Get default user for fallback
     default_user = get_default_user()
+    print(default_user)
 
     try:
         with dest_db.atomic():  # Begin transaction
@@ -142,8 +137,6 @@ def migrate_technicians():
                             )
                             skipped_count += 1
                             continue
-                    else:
-                        created_by_id = record.user_id
 
                     # Attempt to insert into the destination table
                     Technician.insert(
@@ -151,8 +144,8 @@ def migrate_technicians():
                             "name": record.technician_name,
                             "email": record.technician_email,
                             "phone": record.technician_phone,
-                            "user_id": record.user_id,
-                            "created_by": created_by_id,  # Use either original user_id or default user
+                            "user_id": user.id,
+                            "created_by": user.id,
                             "created_at": record.add_date,
                             "updated_at": record.add_date,
                             "deleted_at": None,
@@ -175,8 +168,8 @@ def migrate_technicians():
                                 {
                                     "name": record.technician_name,
                                     "phone": record.technician_phone,
-                                    "user_id": record.user_id,
-                                    "created_by": created_by_id,
+                                    "user_id": user.id,
+                                    "created_by": user.id,
                                     "updated_at": record.add_date,
                                 }
                             ).where(

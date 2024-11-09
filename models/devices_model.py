@@ -15,6 +15,7 @@ from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser
 from datetime import datetime
+from id_mapping import user_id_mapper,dealer_id_mapper
 
 
 # Source Model
@@ -89,7 +90,19 @@ def clean_destination_table():
 def check_user_exists(user_id):
     """Check if a user exists in the destination database"""
     try:
-        return DestinationUser.get(DestinationUser.id == user_id)
+        mapped_user_id = user_id_mapper.get_dest_id(str(user_id))
+        if mapped_user_id:
+            return DestinationUser.get(DestinationUser.id == mapped_user_id)
+    except DoesNotExist:
+        return None
+
+
+def check_dealer_exists(dealer_id):
+    """Check if a dealer exists in the destination database"""
+    try:
+        mapped_dealer_id = dealer_id_mapper.get_dest_id(str(dealer_id))
+        if mapped_dealer_id:
+            return DestinationUser.get(DestinationUser.id == mapped_dealer_id)
     except DoesNotExist:
         return None
 
@@ -113,6 +126,7 @@ def migrate_devices():
                     print(f"Migrating ECU {record.ecu}")
                     # Check if user exists
                     user = check_user_exists(record.ecu_added_by)
+                    dealer = check_dealer_exists(record.dealer_id)
                     if not user:
                         print(
                             f"Skipping ECU {record.ecu} - user_id {record.ecu_added_by} not found"
@@ -133,8 +147,8 @@ def migrate_devices():
                             "device_variant_id": 1,
                             "remarks": record.remarks,
                             "lock": lock_value,
-                            "dealer_id": record.dealer_id,
-                            "user_id": record.ecu_added_by,
+                            "dealer_id": dealer.id,
+                            "user_id": user.id,
                             "blocked": False,
                             "blocked_description": None,
                             "created_at": record.add_date_timestamp,
@@ -159,8 +173,8 @@ def migrate_devices():
                                     "device_variant_id": 1,
                                     "remarks": record.remarks,
                                     "lock": lock_value,
-                                    "dealer_id": record.dealer_id,
-                                    "user_id": record.ecu_added_by,
+                                    "dealer_id": dealer.id,
+                                    "user_id": user.id,
                                     "updated_at": current_time,
                                 }
                             ).where(Device.ecu_number == record.ecu).execute()

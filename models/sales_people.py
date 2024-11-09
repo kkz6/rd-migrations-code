@@ -13,6 +13,7 @@ from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser
 from datetime import datetime
+from id_mapping import user_id_mapper
 
 
 # Source Model
@@ -185,7 +186,9 @@ def migrate_sales_people():
 def check_user_exists(user_id):
     """Check if a user exists in the destination database"""
     try:
-        return DestinationUser.get(DestinationUser.id == user_id)
+        mapped_user_id = user_id_mapper.get_dest_id(str(user_id))
+        if mapped_user_id:
+            return DestinationUser.get(DestinationUser.id == mapped_user_id)
     except DoesNotExist:
         return None
 

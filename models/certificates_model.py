@@ -1,4 +1,5 @@
 import tempfile
+from typing import Optional
 from peewee import *
 from datetime import datetime
 from models.users_model import DestinationUser
@@ -9,6 +10,7 @@ from models.vehicles_model import Vehicle
 from source_db import source_db
 from dest_db import dest_db
 import bcrypt
+from id_mapping import dealer_id_mapper
 
 
 # Source Model
@@ -84,135 +86,6 @@ class Certificate(Model):
         table_name = "certificates"
 
 
-class DealerMaster(Model):
-    id = AutoField()
-    company = CharField(max_length=300)
-    email = CharField(max_length=200, unique=True)
-    phone = TextField()
-    mobile = TextField()
-    emirate = CharField(max_length=20, default="NA")
-    status = CharField(max_length=20, default="AFC")
-    salesuser = CharField(max_length=20)
-    add_date = TimestampField(default=datetime.now)
-    added_by = IntegerField()
-
-    class Meta:
-        database = source_db
-        table_name = "dealer_master"
-
-
-# Destination role models for Spatie
-class Role(Model):
-    id = AutoField()
-    name = CharField()
-    guard_name = CharField()
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
-
-    class Meta:
-        database = dest_db
-        table_name = "roles"
-
-
-class ModelHasRole(Model):
-    role_id = IntegerField()
-    model_type = CharField()
-    model_id = IntegerField()
-
-    class Meta:
-        database = dest_db
-        table_name = "model_has_roles"
-        indexes = ((("model_id", "model_type", "role_id"), True),)
-
-
-class MigrationState:
-    def __init__(self):
-        self.dealer_id_mapping = {}
-
-    def get_mapping(self):
-        return self.dealer_id_mapping
-
-    def set_mapping(self, mapping):
-        self.dealer_id_mapping = mapping
-
-
-def migrate_dealers(migration_state):
-    """
-    Migrate dealers from source to destination database and assign roles.
-    Updates the migration_state with dealer ID mappings.
-    """
-    current_time = datetime.now()
-
-    if source_db.is_closed():
-        source_db.connect()
-    if dest_db.is_closed():
-        dest_db.connect()
-
-    try:
-        # Get or create dealer role
-        dealer_role, created = Role.get_or_create(
-            name="dealer",
-            guard_name="web",
-            defaults={"created_at": current_time, "updated_at": current_time},
-        )
-
-        print(f"Using dealer role ID: {dealer_role.id}")
-
-        # Migrate each dealer
-        for dealer in DealerMaster.select():
-            try:
-                # Generate a random salt
-                salt = bcrypt.gensalt()
-
-                # Hash the password using the salt
-                hashed_password = bcrypt.hashpw("password".encode(), salt)
-
-                username = dealer.company.lower().replace(" ", "_")
-
-                # Create user record for dealer
-                new_user = DestinationUser.create(
-                    name=dealer.company,
-                    email=dealer.email,
-                    password=hashed_password,
-                    username=username,
-                    mobile=dealer.mobile,
-                    company=dealer.company,
-                )
-
-                # Assign dealer role
-                ModelHasRole.create(
-                    role_id=dealer_role.id,
-                    model_type="App\\Models\\User",
-                    model_id=new_user.id,
-                )
-
-                migration_state.dealer_id_mapping[dealer.id] = new_user.id
-                print(
-                    f"Migrated dealer {dealer.company} (ID: {dealer.id}) to user ID: {new_user.id}"
-                )
-
-            except IntegrityError as e:
-                # Handle case where user might already exist
-                if "Duplicate entry" in str(e):
-                    existing_user = DestinationUser.get(
-                        DestinationUser.email == dealer.email
-                    )
-                    migration_state.dealer_id_mapping[dealer.id] = existing_user.id
-                    print(
-                        f"Dealer {dealer.company} already exists as user ID: {existing_user.id}"
-                    )
-                else:
-                    print(f"Error migrating dealer {dealer.company}: {str(e)}")
-            except Exception as e:
-                print(f"Unexpected error migrating dealer {dealer.company}: {str(e)}")
-
-    finally:
-        if not source_db.is_closed():
-            source_db.close()
-        if not dest_db.is_closed():
-            dest_db.close()
-
-
 def clean_destination_table():
     """
     Clean up the destination table before migration.
@@ -243,14 +116,26 @@ def clean_destination_table():
             dest_db.close()
 
 
-def migrate_certificates(migration_state, log_file):
+def get_dealer_mapping(source_dealer_id: str) -> Optional[str]:
+    """
+    Get destination dealer ID for a given source dealer ID.
+    Returns None if mapping doesn't exist.
+    """
+    return dealer_id_mapper.get_dest_id(str(source_dealer_id))
+
+
+def get_user_mapping(source_user_id: str) -> Optional[str]:
+    """
+    Get destination dealer ID for a given source dealer ID.
+    Returns None if mapping doesn't exist.
+    """
+    return dealer_id_mapper.get_dest_id(str(source_user_id))
+
+
+def migrate_certificates(log_file):
     """
     Migrate certificates from source to destination database and update vehicle references.
     """
-
-    dealer_id_mapping = migration_state.get_mapping()
-    if not dealer_id_mapping:
-        raise ValueError("Dealer ID mapping is empty. Run dealer migration first.")
 
     ignored_rows = []
     total_records = CertificateRecord.select().count()
@@ -268,9 +153,9 @@ def migrate_certificates(migration_state, log_file):
             for record in CertificateRecord.select():
                 try:
                     print(f"Processing ECU {record.ecu}")
-
                     # Get mapped dealer ID
-                    dest_dealer_id = dealer_id_mapping.get(record.dealer_id)
+                    dest_dealer_id = get_dealer_mapping(str(record.dealer_id))
+                    dest_user_id = get_user_mapping(str(record.installer_user_id))
                     if not dest_dealer_id:
                         error_msg = f"No matching destination dealer found for source dealer ID: {record.dealer_id}"
                         print(f"Skipping ECU {record.ecu} - {error_msg}")
@@ -295,18 +180,14 @@ def migrate_certificates(migration_state, log_file):
                     except IntegrityError:
                         print(f"Vehicle already exists for ECU {record.ecu}")
 
-                    # Check if related entities exist
-                    installer_user = DestinationUser.get_or_none(
-                        DestinationUser.id == record.installer_user_id
-                    )
-                    if not installer_user:
-                        installer_user = DestinationUser.get_by_id(1)
-
-                    caliberater_user = DestinationUser.get_or_none(
-                        DestinationUser.id == record.caliberater_user_id
-                    )
-                    if not caliberater_user:
-                        caliberater_user = DestinationUser.get_by_id(1)
+                    # mapped_calibrater_user = get_user_mapping(
+                    #     record.caliberater_user_id
+                    # )
+                    # caliberater_user = DestinationUser.get_or_none(
+                    #     DestinationUser.id == mapped_calibrater_user.id
+                    # )
+                    # if not caliberater_user:
+                    #     caliberater_user = DestinationUser.get_by_id(1)
 
                     installed_for = Customer.get_or_none(
                         Customer.id == record.customer_id
@@ -350,7 +231,7 @@ def migrate_certificates(migration_state, log_file):
                             renewal_count=record.renewal_count,
                             description=record.description,
                             dealer_id=dest_dealer_id,
-                            user_id=dest_dealer_id,
+                            user_id=dest_user_id or dest_dealer_id,
                             created_at=current_time,
                             updated_at=current_time,
                             installed_by_id=1,  # Default technician ID
@@ -390,8 +271,8 @@ def migrate_certificates(migration_state, log_file):
                                         "print_count": record.print_count,
                                         "renewal_count": record.renewal_count,
                                         "description": record.description,
-                                        "dealer_id": 1,
-                                        "user_id": record.updated_by_user_id,
+                                        "dealer_id": dest_dealer_id,
+                                        "user_id": dest_user_id or dest_dealer_id,
                                         "updated_at": current_time,
                                         "installed_by_id": 1,
                                         "installed_for_id": (
@@ -452,7 +333,6 @@ def migrate_certificates(migration_state, log_file):
 
 def run_migration():
     """Main function to run the complete migration process"""
-    migration_state = MigrationState()
 
     try:
         # Ask for confirmation before cleanup
@@ -472,11 +352,8 @@ def run_migration():
             print("\nStep 1: Cleaning destination table...")
             clean_destination_table()
 
-            print("\nStep 2: Migrating dealers...")
-            migrate_dealers(migration_state)
-
-            print("\nStep 3: Migrating certificates...")
-            migrate_certificates(migration_state, log_file)
+            print("\nStep 2: Migrating certificates...")
+            migrate_certificates(log_file)
 
             print("\nMigration complete. Logs written to:", log_file.name)
 
