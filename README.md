@@ -1,8 +1,22 @@
-Before running this code, run php artisan migrate and seed command in destination db to fill in the roles data 
+# Project Setup
 
-After running this migration code, add default values for device type, model and variant. 
+This project requires specific steps to initialize the database with roles and set default values for device information.
 
-#Packages
-peewee
-mysqlclient
-bcrypt
+## Prerequisites
+
+Before proceeding, make sure the following packages are installed:
+
+- `peewee` - an ORM for Python.
+- `mysqlclient` - a MySQL database connector for Python.
+- `bcrypt` - a library for hashing passwords.
+
+## Setup Instructions
+
+### Step 1: Run Migrations and Seed Data
+
+1. Navigate to the project directory in the terminal.
+2. Run the following Artisan commands to migrate the database schema and seed initial data:
+
+   ```bash
+   php artisan migrate
+   php artisan db:seed
