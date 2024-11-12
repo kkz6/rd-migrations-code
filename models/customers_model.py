@@ -12,7 +12,7 @@ from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser
-from datetime import datetime
+from id_mapping import user_id_mapper, customer_id_mapper
 
 
 # Source Model
@@ -35,13 +35,10 @@ class CustomerMaster(Model):
 class Customer(Model):
     id = BigIntegerField(primary_key=True)
     email = CharField(max_length=255)
-    name = CharField(max_length=255)  # Will store company name
+    name = CharField(max_length=255)
     address = TextField()
     contact_number = CharField(max_length=255)
     user_id = BigIntegerField()
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db
@@ -111,25 +108,21 @@ def migrate_customers():
                         skipped_count += 1
                         continue
 
-                    # Use company_local if available, otherwise use company name
-                    company_name = (
-                        record.company_local
-                        if record.company_local.strip()
-                        else record.company
-                    )
+                    mapped_user_id = user_id_mapper.get_dest_id(str(record.user_id))
 
                     # Attempt to insert into the destination table
-                    Customer.insert(
-                        {
-                            "name": record.company,
-                            "email": record.email,
-                            "address": record.o_address,
-                            "contact_number": record.o_contactphone,
-                            "user_id": record.user_id
-                        }
-                    ).execute()
+                    new_customer = Customer.create(
+                        name=record.company,
+                        email=record.email,
+                        address=record.o_address,
+                        contact_number=record.o_contactphone,
+                        user_id=mapped_user_id,
+                    )
 
-                    print(f"Migrated Customer: {company_name}, {record.email}")
+                    # Store the ID mapping
+                    customer_id_mapper.add_mapping(str(record.id), str(new_customer.id))
+
+                    print(f"Migrated Customer: {record.company}, {record.email}")
                     migrated_count += 1
 
                 except IntegrityError as e:
@@ -139,29 +132,36 @@ def migrate_customers():
                             print(
                                 f"Duplicate entry for {record.email}. Attempting to update..."
                             )
-                            Customer.update(
-                                {
-                                    "name": company_name,
-                                    "address": record.o_address,
-                                    "contact_number": record.o_contactphone,
-                                    "user_id": record.user_id,
-                                    "updated_at": record.add_date,
-                                }
-                            ).where(Customer.email == record.email).execute()
+                            dest_customer = Customer.get(Customer.email == record.email)
+                            customer_id_mapper.add_mapping(
+                                str(record.id), str(dest_customer.id)
+                            )
+
+                            update_data = {
+                                "name": record.company,
+                                "address": record.o_address,
+                                "contact_number": record.o_contactphone,
+                                "user_id": mapped_user_id,
+                            }
+
+                            Customer.update(update_data).where(
+                                Customer.id == dest_customer.id
+                            ).execute()
+
                             print(
-                                f"Updated existing customer: {company_name}, {record.email}"
+                                f"Updated existing customer: {record.company}, {record.email}"
                             )
                             migrated_count += 1
 
                         except Exception as update_error:
                             print(
-                                f"Error updating {company_name} ({record.email}): {update_error}"
+                                f"Error updating {record.company} ({record.email}): {update_error}"
                             )
                             ignored_rows.append((record, str(update_error)))
                             skipped_count += 1
                     else:
                         print(
-                            f"IntegrityError for {company_name} ({record.email}): {e}"
+                            f"IntegrityError for {record.company} ({record.email}): {e}"
                         )
                         ignored_rows.append((record, str(e)))
                         skipped_count += 1

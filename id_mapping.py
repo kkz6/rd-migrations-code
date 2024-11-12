@@ -80,3 +80,4 @@ class IDMapper:
 # Global instance for ID mapping
 user_id_mapper = IDMapper("users")
 dealer_id_mapper = IDMapper("dealers")
+customer_id_mapper = IDMapper("customers")

@@ -5,7 +5,6 @@ from peewee import (
     TimestampField,
     TextField,
     BooleanField,
-    DoesNotExist,
 )
 from source_db import source_db
 from dest_db import dest_db
@@ -33,8 +32,6 @@ class Vehicle(Model):
     vehicle_no = CharField(max_length=255, null=True)
     vehicle_chassis_no = CharField(max_length=255)
     new_registration = BooleanField(default=False)
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
     certificate_id = BigIntegerField(null=True)
 
     class Meta:
@@ -95,7 +92,7 @@ def migrate_vehicles():
                             "model": record.fleet_veh_model,
                             "vehicle_no": record.fleet_veh_no,
                             "vehicle_chassis_no": record.fleet_chassis,
-                            "new_registration": False,  # Default value as per schema
+                            "new_registration": False,
                         }
                     ).execute()
 

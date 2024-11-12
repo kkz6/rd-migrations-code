@@ -10,7 +10,7 @@ from models.vehicles_model import Vehicle
 from source_db import source_db
 from dest_db import dest_db
 import bcrypt
-from id_mapping import dealer_id_mapper
+from id_mapping import dealer_id_mapper, customer_id_mapper
 
 
 # Source Model
@@ -171,8 +171,6 @@ def migrate_certificates(log_file):
                                 "vehicle_no": record.vehicle_registration,
                                 "vehicle_chassis_no": record.vehicle_chassis,
                                 "new_registration": False,
-                                "created_at": current_time,
-                                "updated_at": current_time,
                                 "model": record.vehicle_type,  # added vehicle_type here since no model in source
                             }
                         ).execute()
@@ -181,7 +179,7 @@ def migrate_certificates(log_file):
                         print(f"Vehicle already exists for ECU {record.ecu}")
 
                     # mapped_calibrater_user = get_user_mapping(
-                    #     record.caliberater_user_id
+                    #     str(record.caliberater_user_id)
                     # )
                     # caliberater_user = DestinationUser.get_or_none(
                     #     DestinationUser.id == mapped_calibrater_user.id
@@ -189,8 +187,12 @@ def migrate_certificates(log_file):
                     # if not caliberater_user:
                     #     caliberater_user = DestinationUser.get_by_id(1)
 
+                    mapped_installed_for_id = customer_id_mapper.get_dest_id(
+                        str(record.customer_id)
+                    )
+
                     installed_for = Customer.get_or_none(
-                        Customer.id == record.customer_id
+                        Customer.id == mapped_installed_for_id
                     )
                     device = Device.get_or_none(Device.ecu_number == record.ecu)
                     vehicle = Vehicle.get_or_none(
@@ -232,8 +234,6 @@ def migrate_certificates(log_file):
                             description=record.description,
                             dealer_id=dest_dealer_id,
                             user_id=dest_user_id or dest_dealer_id,
-                            created_at=current_time,
-                            updated_at=current_time,
                             installed_by_id=1,  # Default technician ID
                             installed_for_id=(
                                 installed_for.id if installed_for else None
@@ -242,9 +242,9 @@ def migrate_certificates(log_file):
                         )
 
                         # Update the vehicle with the certificate ID
-                        Vehicle.update(
-                            certificate_id=certificate.id, updated_at=current_time
-                        ).where(Vehicle.id == vehicle.id).execute()
+                        Vehicle.update(certificate_id=certificate.id).where(
+                            Vehicle.id == vehicle.id
+                        ).execute()
 
                         print(
                             f"Successfully migrated Certificate: ECU {record.ecu} and updated vehicle reference"
@@ -273,7 +273,6 @@ def migrate_certificates(log_file):
                                         "description": record.description,
                                         "dealer_id": dest_dealer_id,
                                         "user_id": dest_user_id or dest_dealer_id,
-                                        "updated_at": current_time,
                                         "installed_by_id": 1,
                                         "installed_for_id": (
                                             installed_for.id if installed_for else None
@@ -287,7 +286,6 @@ def migrate_certificates(log_file):
                                 # Update the vehicle with the certificate ID
                                 Vehicle.update(
                                     certificate_id=existing_certificate.id,
-                                    updated_at=current_time,
                                 ).where(Vehicle.id == vehicle.id).execute()
 
                                 print(
@@ -319,7 +317,8 @@ def migrate_certificates(log_file):
             dest_db.close()
 
     # Print migration summary
-    print(f"\nMigration Summary:", file=log_file)
+    print(f"\n Migration from certificates to certificates table ", file=log_file)
+    print(f"\n Summary:", file=log_file)
     print(f"Total records processed: {total_records}", file=log_file)
     print(f"Successfully migrated: {migrated_count}", file=log_file)
     print(f"Skipped/Failed: {skipped_count}", file=log_file)

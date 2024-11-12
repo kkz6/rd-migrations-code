@@ -64,8 +64,6 @@ class DestinationUser(Model):
     country = CharField(max_length=255, null=True)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db
@@ -94,8 +92,6 @@ class Role(Model):
     id = AutoField()
     name = CharField()
     guard_name = CharField()
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db
@@ -149,7 +145,7 @@ def migrate_dealers():
                 salt = bcrypt.gensalt()
 
                 # Hash the password using the salt
-                hashed_password = bcrypt.hashpw("password".encode(), salt)
+                hashed_password = generate_default_password()
 
                 username = dealer.company.lower().replace(" ", "_")
 
@@ -254,33 +250,60 @@ def generate_username(full_name):
 
 def generate_default_password():
     """
-    Generate a bcrypt hashed password from default string
+    Generate a Laravel-compatible bcrypt hashed password.
+    Laravel expects passwords to be hashed with bcrypt and have a specific format:
+    $2y$rounds$salt+hash
     """
-    default_password = "password"  # You can change this default password
-    # Generate salt and hash the password
-    salt = bcrypt.gensalt()
+    default_password = "password"  # Customize as needed
+    salt = bcrypt.gensalt(rounds=10)  # Laravel default is 10 rounds
     hashed = bcrypt.hashpw(default_password.encode("utf-8"), salt)
-    return hashed.decode("utf-8")  # Convert bytes to string for storage
+
+    # Convert the bcrypt hash to Laravel's expected format
+    # Replace $2b$ (Python's bcrypt prefix) with $2y$ (Laravel's expected prefix)
+    laravel_hash = hashed.decode("utf-8").replace("$2b$", "$2y$")
+
+    return laravel_hash
 
 
 def migrate_users():
+    """
+    Migrate users using the global ID mapper for relationship tracking.
+    """
     ignored_rows = []
     total_records = User.select().count()
     migrated_count = 0
     skipped_count = 0
     updated_count = 0
 
-    # Establish connections if not already connected
     if source_db.is_closed():
         source_db.connect()
     if dest_db.is_closed():
         dest_db.connect()
 
     try:
-        with dest_db.atomic():  # Begin transaction
+        # Get or create roles
+        admin_role, created = Role.get_or_create(
+            name="super_admin",
+            guard_name="web",
+        )
+
+        dealer_role, created = Role.get_or_create(
+            name="dealer",
+            guard_name="web",
+        )
+
+        with dest_db.atomic():
             for record in User.select():
                 try:
-                    # Check for existing username and add a number suffix if needed
+                    # Check if user was already migrated
+                    existing_mapping = user_id_mapper.get_dest_id(str(record.id))
+                    if existing_mapping:
+                        print(
+                            f"User {record.full_name} already migrated with mapping {record.id} -> {existing_mapping}"
+                        )
+                        continue
+
+                    # Generate username and password
                     base_username = record.username or generate_username(
                         record.full_name
                     )
@@ -294,17 +317,14 @@ def migrate_users():
                         username = f"{base_username}{suffix}"
                         suffix += 1
 
-                    # Generate password if not present
-                    password = record.password or generate_default_password()
-
-                    # Process email, removing any trailing hyphen
+                    password = generate_default_password()
                     email = record.email.rstrip("-").strip().lower()
 
-                    # Attempt to insert into the destination table
+                    # Create new user
                     new_user = DestinationUser.create(
                         name=record.full_name,
                         email=email,
-                        email_verified_at=None,
+                        email_verified_at=datetime.now(),
                         password=password,
                         username=username,
                         company=record.company,
@@ -312,32 +332,44 @@ def migrate_users():
                         phone=None,
                         mobile=record.mobile,
                         emirates=None,
-                        timezone=None,
+                        timezone="UTC",
                         country=record.country,
                         state=None,
+                        parent_id=None,
                         remember_token=None,
                     )
 
                     # Store the ID mapping
                     user_id_mapper.add_mapping(str(record.id), str(new_user.id))
-                    print(f"Migrated User: {record.id}, {new_user.id}")
 
-                    print(f"Migrated User: {record.full_name}, {email}")
+                    # Assign role based on usertype
+                    role_id = (
+                        admin_role.id
+                        if record.usertype.lower() == "admin"
+                        else dealer_role.id
+                    )
+                    ModelHasRole.create(
+                        role_id=role_id,
+                        model_type="App\\Models\\User",
+                        model_id=new_user.id,
+                    )
+
+                    print(
+                        f"Migrated User: {record.full_name} (Old ID: {record.id}, New ID: {new_user.id})"
+                    )
                     migrated_count += 1
 
                 except IntegrityError as e:
-                    # Handle duplicate entries specifically
                     if "Duplicate entry" in str(e):
                         try:
                             print(
                                 f"Duplicate entry for {email}. Attempting to update..."
                             )
-
                             dest_user = DestinationUser.get(
                                 DestinationUser.email == email
                             )
 
-                            # Store the ID mapping for existing user
+                            # Store mapping for existing user
                             user_id_mapper.add_mapping(
                                 str(record.id), str(dest_user.id)
                             )
@@ -351,46 +383,39 @@ def migrate_users():
                                 ),
                                 "mobile": record.mobile,
                                 "country": record.country,
-                                "updated_at": record.add_date,
                             }
 
                             if not dest_user.password:
                                 update_data["password"] = generate_default_password()
 
-                                DestinationUser.update(update_data).where(
-                                    DestinationUser.id == dest_user.id
-                                ).execute()
+                            DestinationUser.update(update_data).where(
+                                DestinationUser.id == dest_user.id
+                            ).execute()
 
-                            print(f"Updated existing user: {record.full_name}, {email}")
+                            print(f"Updated existing user: {record.full_name}")
                             updated_count += 1
 
                         except Exception as update_error:
-                            print(
-                                f"Error updating {record.full_name} ({email}): {update_error}"
-                            )
+                            print(f"Error updating {record.full_name}: {update_error}")
                             ignored_rows.append((record, str(update_error)))
                             skipped_count += 1
-
                     else:
-                        print(
-                            f"IntegrityError for {record.full_name} ({record.email}): {e}"
-                        )
+                        print(f"IntegrityError for {record.full_name}: {e}")
                         ignored_rows.append((record, str(e)))
                         skipped_count += 1
 
                 except Exception as e:
-                    print(f"Error migrating {record.full_name} ({record.email}): {e}")
+                    print(f"Error migrating {record.full_name}: {e}")
                     ignored_rows.append((record, str(e)))
                     skipped_count += 1
 
     finally:
-        # Close connections
         if not source_db.is_closed():
             source_db.close()
         if not dest_db.is_closed():
             dest_db.close()
 
-    # Summary of migration results
+    # Print migration summary
     print(f"\nMigration Summary:")
     print(f"Total records processed: {total_records}")
     print(f"Successfully migrated (new): {migrated_count}")

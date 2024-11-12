@@ -36,9 +36,6 @@ class Technician(Model):
     email = CharField(max_length=255)
     phone = CharField(max_length=255)
     user_id = BigIntegerField()
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
     created_by = ForeignKeyField(
         DestinationUser, field="id", null=True, column_name="created_by"
     )
@@ -146,9 +143,6 @@ def migrate_technicians():
                             "phone": record.technician_phone,
                             "user_id": user.id,
                             "created_by": user.id,
-                            "created_at": record.add_date,
-                            "updated_at": record.add_date,
-                            "deleted_at": None,
                         }
                     ).execute()
 
@@ -170,7 +164,6 @@ def migrate_technicians():
                                     "phone": record.technician_phone,
                                     "user_id": user.id,
                                     "created_by": user.id,
-                                    "updated_at": record.add_date,
                                 }
                             ).where(
                                 Technician.email == record.technician_email

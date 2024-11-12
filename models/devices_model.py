@@ -5,7 +5,6 @@ from peewee import (
     TimestampField,
     TextField,
     IntegerField,
-    ForeignKeyField,
     BooleanField,
     DoesNotExist,
     AutoField,  # Added for explicit primary key
@@ -15,7 +14,7 @@ from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser
 from datetime import datetime
-from id_mapping import user_id_mapper,dealer_id_mapper
+from id_mapping import user_id_mapper, dealer_id_mapper
 
 
 # Source Model
@@ -45,10 +44,7 @@ class Device(Model):
     dealer_id = BigIntegerField(null=True)
     user_id = BigIntegerField()
     blocked = BooleanField(default=False)
-    blocked_description = TextField(null=True)  # Added missing field
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
+    blocked_description = TextField(null=True)
 
     class Meta:
         database = dest_db
@@ -151,8 +147,6 @@ def migrate_devices():
                             "user_id": user.id,
                             "blocked": False,
                             "blocked_description": None,
-                            "created_at": record.add_date_timestamp,
-                            "updated_at": current_time,
                         }
                     ).execute()
 
@@ -175,7 +169,6 @@ def migrate_devices():
                                     "lock": lock_value,
                                     "dealer_id": dealer.id,
                                     "user_id": user.id,
-                                    "updated_at": current_time,
                                 }
                             ).where(Device.ecu_number == record.ecu).execute()
                             print(f"Updated existing device: ECU {record.ecu}")

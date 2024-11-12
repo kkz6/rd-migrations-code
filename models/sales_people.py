@@ -13,7 +13,7 @@ from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser
 from datetime import datetime
-from id_mapping import user_id_mapper
+from id_mapping import user_id_mapper, dealer_id_mapper
 
 
 # Source Model
@@ -35,10 +35,7 @@ class SalesPeople(Model):
     email = CharField(max_length=255)
     phone = CharField(max_length=255)
     user_id = BigIntegerField()
-    status = CharField(default="blocked")
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
+    status = CharField(default="active")
 
     class Meta:
         database = dest_db
@@ -121,14 +118,17 @@ def migrate_sales_people():
                         .first()
                     )
 
+                    mapped_dealer_id = dealer_id_mapper.get_dest_id(
+                        str(latest_sale.dealer_id)
+                    )
+
                     # Create new sales person record
                     SalesPeople.create(
                         name=user.name,
                         email=user.email,
                         phone=user.mobile,
-                        user_id=latest_sale.dealer_id,  # Map dealer_id to user_id
+                        user_id=mapped_dealer_id, 
                         status="active",
-                        created_at=record.first_deal_date,
                     )
 
                     print(f"Created sales person: {user.name} (ID: {record.user_id})")
@@ -143,8 +143,7 @@ def migrate_sales_people():
                             SalesPeople.update(
                                 name=user.name,
                                 phone=user.mobile,
-                                user_id=latest_sale.dealer_id,
-                                updated_at=datetime.now(),
+                                user_id=mapped_dealer_id,
                             ).where(SalesPeople.email == user.email).execute()
 
                             print(f"Updated existing sales person: {user.name}")
