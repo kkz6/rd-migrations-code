@@ -12,7 +12,7 @@ Before proceeding, make sure the following packages are installed:
 
 ## Setup Instructions
 
-### Step 1: Run Migrations and Seed Data
+### Initial Step: Run Migrations and Seed Data
 
 1. Navigate to the project directory in the terminal.
 2. Run the following Artisan commands to migrate the database schema and seed initial data:
@@ -20,3 +20,7 @@ Before proceeding, make sure the following packages are installed:
    ```bash
    php artisan migrate
    php artisan db:seed
+
+### Final Step: Add default data for device-related tables
+
+1. Add default test data for device model, device type and device variant
