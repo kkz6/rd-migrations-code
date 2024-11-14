@@ -9,7 +9,7 @@ class SourceModel(Model):
 
     class Meta:
         database = None  # To be set in the database connection files
-        table_name = 'source_table'  # Replace with your actual table name
+        table_name = 'rd_cms_old'  # Replace with your actual table name
 
 
 # Destination model
@@ -19,4 +19,4 @@ class DestModel(Model):
 
     class Meta:
         database = None  # To be set in the database connection files
-        table_name = 'destination_table'  # Replace with your actual table name
+        table_name = 'rd_cms'  # Replace with your actual table name

@@ -16,16 +16,16 @@ def migrate_data():
     dest_db.connect()
 
     try:
-        user_id_mapper.clear_mapping()
-        dealer_id_mapper.clear_mapping()
-        customer_id_mapper.clear_mapping()
+        # user_id_mapper.clear_mapping()
+        # dealer_id_mapper.clear_mapping()
+        # customer_id_mapper.clear_mapping()
         run_users_migration()
-        run_technicians_migration()
-        run_customers_migration()
-        run_salespeople_migration()
-        run_vehicles_migration()
-        run_devices_migration()
-        run_certificates_migration()
+        # run_technicians_migration()
+        # run_customers_migration()
+        # run_salespeople_migration()
+        # run_vehicles_migration()
+        # run_devices_migration()
+        # run_certificates_migration()
 
     except Exception as e:
         print(f"Error occurred: {e}")
