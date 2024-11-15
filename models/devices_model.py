@@ -8,13 +8,13 @@ from peewee import (
     BooleanField,
     DoesNotExist,
     AutoField, 
-    JSONField,
+    BlobField,
     ForeignKeyField,
 )
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
-from models.users_model import DestinationUser
+from models.users_model import DestinationUser, User, DealerMaster
 from datetime import datetime
 from id_mapping import user_id_mapper, dealer_id_mapper
 
@@ -34,7 +34,7 @@ class EcuMaster(Model):
         primary_key = False  # Disable automatic id field
 
 class DeviceType(Model):
-    id = BigIntegerField(primary_key=True, auto_increment=True)
+    id = BigIntegerField(primary_key=True)
     name = CharField(max_length=255)
     enabled = IntegerField(default=1)  # TINYINT(1) maps to IntegerField (0 or 1)
     user_id = BigIntegerField()
@@ -47,7 +47,7 @@ class DeviceType(Model):
         table_name = 'device_types'
 
 class DeviceModel(Model):
-    id = BigIntegerField(primary_key=True, auto_increment=True)
+    id = BigIntegerField(primary_key=True)
     name = CharField(max_length=255)
     enabled = IntegerField(default=1)  # tinyint(1) mapped to IntegerField
     user_id = BigIntegerField()
@@ -65,7 +65,7 @@ class DeviceModel(Model):
         )
 
 class DeviceVariant(Model):
-    id = BigIntegerField(primary_key=True, auto_increment=True)
+    id = BigIntegerField(primary_key=True)
     name = CharField(max_length=255)
     description = CharField(max_length=255)
     enabled = IntegerField(default=1)  # TINYINT(1) for enabled/disabled status
@@ -85,7 +85,7 @@ class DeviceVariant(Model):
 # Destination Model
 
 class Device(Model):
-    id = BigIntegerField(primary_key=True, auto_increment=True)
+    id = BigIntegerField(primary_key=True)
     ecu_number = CharField(max_length=255, unique=True)
     device_type_id = ForeignKeyField(DeviceType, backref='devices', on_delete='CASCADE')
     device_model_id = ForeignKeyField(DeviceModel, backref='devices', on_delete='CASCADE')
@@ -95,7 +95,7 @@ class Device(Model):
     dealer_id = BigIntegerField(null=True)
     user_id = BigIntegerField()
     blocked = IntegerField(default=0)
-    blocked_description = JSONField(null=True)
+    blocked_description = BlobField(null=True)
     created_at = TimestampField(null=True)
     updated_at = TimestampField(null=True)
     deleted_at = TimestampField(null=True)
@@ -151,10 +151,9 @@ def check_user_exists(user_id):
 
 def check_dealer_exists(dealer_id):
     """Check if a dealer exists in the destination database"""
+    dealer = DealerMaster.get(DealerMaster.id == dealer_id);
     try:
-        mapped_dealer_id = dealer_id_mapper.get_dest_id(str(dealer_id))
-        if mapped_dealer_id:
-            return DestinationUser.get(DestinationUser.id == mapped_dealer_id)
+        return DestinationUser.get(DestinationUser.email == dealer.email)
     except DoesNotExist:
         return None
 

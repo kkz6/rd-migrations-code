@@ -1,6 +1,5 @@
 from datetime import datetime
 import re
-import bcrypt
 from peewee import (
     Model,
     CharField,
@@ -169,7 +168,7 @@ def migrate_dealers():
                     username = sub_user.username or generate_username(
                         sub_user.full_name
                     )        
-                    password = generate_default_password()
+                    password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
                     email = sub_user.email.rstrip("-").strip().lower()
 
                     # Generate username and password
@@ -289,23 +288,6 @@ def generate_username(full_name):
     # Replace spaces with *
     username = username.replace(" ", "*")
     return username
-
-
-def generate_default_password():
-    """
-    Generate a Laravel-compatible bcrypt hashed password.
-    Laravel expects passwords to be hashed with bcrypt and have a specific format:
-    $2y$rounds$salt+hash
-    """
-    default_password = "password"  # Customize as needed
-    salt = bcrypt.gensalt(rounds=10)  # Laravel default is 10 rounds
-    hashed = bcrypt.hashpw(default_password.encode("utf-8"), salt)
-
-    # Convert the bcrypt hash to Laravel's expected format
-    # Replace $2b$ (Python's bcrypt prefix) with $2y$ (Laravel's expected prefix)
-    laravel_hash = hashed.decode("utf-8").replace("$2b$", "$2y$")
-
-    return laravel_hash
 
 
 def migrate_admin_users():
