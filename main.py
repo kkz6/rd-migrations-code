@@ -16,10 +16,10 @@ def migrate_data():
     dest_db.connect()
 
     try:
-        # user_id_mapper.clear_mapping()
-        # dealer_id_mapper.clear_mapping()
-        # customer_id_mapper.clear_mapping()
-        # run_users_migration()
+        user_id_mapper.clear_mapping()
+        dealer_id_mapper.clear_mapping()
+        customer_id_mapper.clear_mapping()
+        run_users_migration()
         # run_technicians_migration()
         # run_customers_migration()
         # run_salespeople_migration()

@@ -163,8 +163,7 @@ def migrate_devices():
     total_records = EcuMaster.select().count()
     migrated_count = 0
     skipped_count = 0
-    current_time = datetime.now()
-
+    
     if source_db.is_closed():
         source_db.connect()
     if dest_db.is_closed():
@@ -174,19 +173,8 @@ def migrate_devices():
         with dest_db.atomic():
             for record in EcuMaster.select():
                 try:
-                    print(f"Migrating ECU {record.ecu}")
-                    # Check if user exists
-                    user = check_user_exists(record.ecu_added_by)
-                    dealer = check_dealer_exists(record.dealer_id)
-                    if not user:
-                        print(
-                            f"Skipping ECU {record.ecu} - user_id {record.ecu_added_by} not found"
-                        )
-                        ignored_rows.append((record, "User ID not found"))
-                        skipped_count += 1
-                        continue
-
-                    record = get_device_data_by_ecu(record)
+                    print(f"Migrating ECU {record.ecu}")    
+                    get_device_data_by_ecu(record)
 
                     print(f"Migrated Device: ECU {record.ecu}")
                     migrated_count += 1
