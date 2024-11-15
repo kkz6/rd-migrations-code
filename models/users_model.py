@@ -134,7 +134,7 @@ def migrate_dealers():
         for dealer in DealerMaster.select():
             try:
                 # Hash the password using the salt
-                hashed_password = generate_default_password()
+                hashed_password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
 
                 username = dealer.company.lower().replace(" ", "_")
 
