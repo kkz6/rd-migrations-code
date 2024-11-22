@@ -16,8 +16,6 @@ from dest_db import dest_db
 from peewee import IntegrityError
 from models.users_model import DestinationUser, User, DealerMaster
 from datetime import datetime
-from id_mapping import user_id_mapper, dealer_id_mapper
-
 
 # Source Model
 class EcuMaster(Model):
@@ -139,16 +137,6 @@ def clean_destination_table():
             dest_db.close()
 
 
-def check_user_exists(user_id):
-    """Check if a user exists in the destination database"""
-    try:
-        mapped_user_id = user_id_mapper.get_dest_id(str(user_id))
-        if mapped_user_id:
-            return DestinationUser.get(DestinationUser.id == mapped_user_id)
-    except DoesNotExist:
-        return None
-
-
 def check_dealer_exists(dealer_id):
     """Check if a dealer exists in the destination database"""
     dealer = DealerMaster.get(DealerMaster.id == dealer_id);
@@ -171,10 +159,11 @@ def migrate_devices():
 
     try:
         with dest_db.atomic():
+            user = DestinationUser.get(DestinationUser.email == "linoj@resloute-dynamics.com")
             for record in EcuMaster.select():
                 try:
                     print(f"Migrating ECU {record.ecu}")    
-                    get_device_data_by_ecu(record)
+                    get_device_data_by_ecu(record,user)
 
                     print(f"Migrated Device: ECU {record.ecu}")
                     migrated_count += 1
@@ -291,12 +280,9 @@ def get_or_create_device_variant(name, device_model, user):
     return device_variant
 
 # Function to match ECU number and fetch or create data
-def get_device_data_by_ecu(ecu_record):
+def get_device_data_by_ecu(ecu_record, user):
     for prefix, mapping in ecm_mapping.items():
         if ecu_record.ecu.startswith(prefix):
-
-            user = DestinationUser.get(DestinationUser.email == "linoj@resloute-dynamics.com")
-
             device_type = get_or_create_device_type(mapping['device_type'], user)
             device_model = get_or_create_device_model(mapping['device_model'], device_type, mapping['approval_code'], user)
             device_variant = get_or_create_device_variant(mapping['device_variant'], device_model, user)

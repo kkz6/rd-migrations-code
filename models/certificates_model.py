@@ -10,8 +10,6 @@ from models.vehicles_model import Vehicle
 from source_db import source_db
 from dest_db import dest_db
 import bcrypt
-from id_mapping import dealer_id_mapper, customer_id_mapper
-
 
 # Source Model
 class CertificateRecord(Model):
@@ -106,7 +104,7 @@ class DestTechnician(Model):
         table_name = "technicians"
 
 
-def get_dealer_mapping(source_dealer_id: str) -> Optional[str]:
+def get_dealer_mapping(source_dealer_id) -> Optional[str]:
     """
     Get destination dealer ID for a given source dealer ID.
     Returns None if mapping doesn't exist.
@@ -175,70 +173,68 @@ def migrate_certificates(log_file):
         dealer = get_dealer_mapping(str(record.dealer_id))
         user = get_user_mapping(str(record.installer_user_id))
 
-        exit;
+        if not dealer:
+            error_msg = f"No matching destination dealer found for source dealer ID: {record.dealer_id}"
+            print(f"Skipping ECU {record.ecu} - {error_msg}")
+            ignored_rows.append((record, error_msg))
+            skipped_count += 1
+            continue
 
-        # if not dealer:
-        #     error_msg = f"No matching destination dealer found for source dealer ID: {record.dealer_id}"
-        #     print(f"Skipping ECU {record.ecu} - {error_msg}")
-        #     ignored_rows.append((record, error_msg))
-        #     skipped_count += 1
-        #     continue
+        try:
+            vehicle,created = Vehicle.get_or_create(
+                brand= record.vehicle_type,
+                vehicle_no=record.vehicle_registration,
+                vehicle_chassis_no=record.vehicle_chassis,
+                new_registration=False,
+                model=record.vehicle_type,
+            ).execute()
+            print(f"Created new vehicle record for ECU {record.ecu}")
+        except IntegrityError:
+            print(f"Vehicle already exists for ECU {record.ecu}")
 
-        # try:
-        #     vehicle,created = Vehicle.get_or_create(
-        #         brand= record.vehicle_type,
-        #         vehicle_no=record.vehicle_registration,
-        #         vehicle_chassis_no=record.vehicle_chassis,
-        #         new_registration=False,
-        #         model=record.vehicle_type,
-        #     ).execute()
-        #     print(f"Created new vehicle record for ECU {record.ecu}")
-        # except IntegrityError:
-        #     print(f"Vehicle already exists for ECU {record.ecu}")
+        customer = create_and_assign_customer(record.customer_id,record.dealer_id)
 
-        # customer = create_and_assign_customer(record.customer_id,record.dealer_id)
+        technician = create_assign_technician(record)
 
-        # technician = create_assign_technician(record)
+        device = Device.get_or_none(Device.ecu_number == record.ecu)
 
-        # device = Device.get_or_none(Device.ecu_number == record.ecu)
+        # Convert speed value by removing any non-numeric characters
+        speed_value = "".join(filter(str.isdigit, record.speed))
+        speed_limit = int(speed_value) if speed_value else 0
 
-        # # Convert speed value by removing any non-numeric characters
-        # speed_value = "".join(filter(str.isdigit, record.speed))
-        # speed_limit = int(speed_value) if speed_value else 0
+        if not all([device, vehicle]):
+            missing_entities = []
+            if not device:
+                missing_entities.append("device")
+            if not vehicle:
+                missing_entities.append("vehicle")
 
-        # if not all([device, vehicle]):
-        #     missing_entities = []
-        #     if not device:
-        #         missing_entities.append("device")
-        #     if not vehicle:
-        #         missing_entities.append("vehicle")
+            error_msg = (
+                f"Missing related entities: {', '.join(missing_entities)}"
+            )
+            print(f"Skipping ECU {record.ecu} - {error_msg}")
+            ignored_rows.append((record, error_msg))
+            skipped_count += 1
+            continue
 
-        #     error_msg = (
-        #         f"Missing related entities: {', '.join(missing_entities)}"
-        #     )
-        #     print(f"Skipping ECU {record.ecu} - {error_msg}")
-        #     ignored_rows.append((record, error_msg))
-        #     skipped_count += 1
-        #     continue
-
-        # certificate, created = Certificate.create(
-        #     serial_number=record.serialno,
-        #     status="active",
-        #     device_id=device.id,
-        #     installation_date=record.date_actual_installation,
-        #     calibration_date=record.date_calibrate,
-        #     expiry_date=record.date_expiry,
-        #     km_reading=record.kilometer or 0,
-        #     speed_limit=speed_limit,
-        #     print_count=record.print_count,
-        #     renewal_count=record.renewal_count,
-        #     description=record.description,
-        #     dealer_id=dealer.id,
-        #     user_id=user.id or dealer.id,
-        #     installed_by_id=technician.id,
-        #     installed_for_id=customer.id,
-        #     vehicle_id=vehicle.id,
-        # )
+        certificate, created = Certificate.create(
+            serial_number=record.serialno,
+            status="active",
+            device_id=device.id,
+            installation_date=record.date_actual_installation,
+            calibration_date=record.date_calibrate,
+            expiry_date=record.date_expiry,
+            km_reading=record.kilometer or 0,
+            speed_limit=speed_limit,
+            print_count=record.print_count,
+            renewal_count=record.renewal_count,
+            description=record.description,
+            dealer_id=dealer.id,
+            user_id=user.id or dealer.id,
+            installed_by_id=technician.id,
+            installed_for_id=customer.id,
+            vehicle_id=vehicle.id,
+        )
 
         print(
             f"Successfully migrated Certificate: ECU {record.ecu} and updated vehicle reference"
