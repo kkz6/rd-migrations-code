@@ -9,7 +9,6 @@ from models.devices_model import Device
 from models.vehicles_model import Vehicle
 from source_db import source_db
 from dest_db import dest_db
-import bcrypt
 
 # Source Model
 class CertificateRecord(Model):
