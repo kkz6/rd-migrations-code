@@ -309,8 +309,7 @@ def get_device_data_by_ecu(ecu_record, user):
                 mapping["device_model"], device_type, mapping["approval_code"], user
             )
             device_variant = get_or_create_device_variant(
-                mapping["device_variant"]
-                or mapping["device_model"].lower().replace(" ", "_"),
+                mapping["device_variant"],
                 device_model,
                 user,
             )
