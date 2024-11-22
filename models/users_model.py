@@ -163,7 +163,7 @@ def migrate_dealers():
                 )
 
 
-                for sub_user in User.select().where(User.company == new_user.company):
+                for sub_user in User.select().where(User.company == dealer.company):
 
                     username = sub_user.username or generate_username(
                         sub_user.full_name
@@ -192,7 +192,7 @@ def migrate_dealers():
                         email_verified_at=datetime.now(),
                         password=password,
                         username=username,
-                        company=sub_user.company,
+                        company=dealer.company,
                         status="active" if sub_user.activstate == 1 else "blocked",
                         phone=None,
                         mobile=sub_user.mobile,
@@ -215,19 +215,7 @@ def migrate_dealers():
                 print(
                     f"Migrated dealer {dealer.company} (ID: {dealer.id}) to user ID: {new_user.id}"
                 )
-
-            except IntegrityError as e:
-                # Handle case where user might already exist
-                if "Duplicate entry" in str(e):
-                    existing_user = DestinationUser.get(
-                        DestinationUser.email == dealer.email
-                    )
-                    dealer_id_mapper.add_mapping(str(dealer.id), str(existing_user.id))
-                    print(
-                        f"Dealer {dealer.company} already exists as user ID: {existing_user.id}"
-                    )
-                else:
-                    print(f"Error migrating dealer {dealer.company}: {str(e)}")
+                
             except Exception as e:
                 print(f"Unexpected error migrating dealer {dealer.company}: {str(e)}")
                 print(e)
@@ -321,7 +309,7 @@ def migrate_admin_users():
                     username = record.username or generate_username(
                         record.full_name
                     )        
-                    password = generate_default_password()
+                    password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
                     email = record.email.rstrip("-").strip().lower()
 
                     # Generate username and password

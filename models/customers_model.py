@@ -44,6 +44,14 @@ class Customer(Model):
         database = dest_db
         table_name = "customers"
 
+class CustomerDealer(Model):
+    customer_id=BigIntegerField(),
+    dealer_id=BigIntegerField(),
+
+    class Meta:
+        database = dest_db
+        table_name = "customer_dealer"
+
 
 def clean_destination_table():
     """
