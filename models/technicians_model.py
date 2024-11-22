@@ -11,9 +11,7 @@ from peewee import (
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
-from models.users_model import DestinationUser
-from id_mapping import user_id_mapper
-
+from models.users_model import DestinationUser, User
 
 # Source Model
 class TechnicianMaster(Model):
@@ -81,9 +79,8 @@ def clean_destination_table():
 def check_user_exists(user_id):
     """Check if a user exists in the destination database"""
     try:
-        mapped_user_id = user_id_mapper.get_dest_id(str(user_id))
-        if mapped_user_id:
-            return DestinationUser.get(DestinationUser.id == mapped_user_id)
+        sourceUser = User.get(User.id == user_id)
+        return DestinationUser.get(DestinationUser.email == sourceUser.email)
     except DoesNotExist:
         return None
 

@@ -132,7 +132,9 @@ def migrate_dealers():
         for dealer in DealerMaster.select():
             try:
                 # Hash the password using the salt
-                hashed_password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                hashed_password = (
+                    "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                )
 
                 username = dealer.company.lower().replace(" ", "_")
 
@@ -147,7 +149,7 @@ def migrate_dealers():
                     status="active",
                     phone=dealer.phone,
                     mobile=dealer.mobile,
-                    country='UAE',
+                    country="UAE",
                     emirates=dealer.emirate,
                     created_at=datetime.now(),
                     updated_at=datetime.now(),
@@ -160,13 +162,14 @@ def migrate_dealers():
                     model_id=new_user.id,
                 )
 
-
                 for sub_user in User.select().where(User.company == dealer.company):
 
                     username = sub_user.username or generate_username(
                         sub_user.full_name
-                    )        
-                    password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                    )
+                    password = (
+                        "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                    )
                     email = sub_user.email.rstrip("-").strip().lower()
 
                     # Generate username and password
@@ -199,7 +202,7 @@ def migrate_dealers():
                         created_at=datetime.now(),
                         updated_at=datetime.now(),
                         emirates=dealer.emirate,
-                        parent_id=new_user.id
+                        parent_id=new_user.id,
                     )
 
                     # Assign dealer role
@@ -209,11 +212,10 @@ def migrate_dealers():
                         model_id=newSubUser.id,
                     )
 
-
                 print(
                     f"Migrated dealer {dealer.company} (ID: {dealer.id}) to user ID: {new_user.id}"
                 )
-                
+
             except Exception as e:
                 print(f"Unexpected error migrating dealer {dealer.company}: {str(e)}")
                 print(e)
@@ -304,10 +306,10 @@ def migrate_admin_users():
             for record in User.select().where(User.usertype == 'Admin').orwhere(User.usertype == 'Management').orwhere(User.usertype == 'Sales').orwhere(User.usertype == 'Service'):
                 try:
                     # Generate username and password
-                    username = record.username or generate_username(
-                        record.full_name
-                    )        
-                    password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                    username = record.username or generate_username(record.full_name)
+                    password = (
+                        "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+                    )
                     email = record.email.rstrip("-").strip().lower()
 
                     # Generate username and password
