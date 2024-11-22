@@ -14,6 +14,7 @@ from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
 
+
 # Source Model
 class User(Model):
     id = BigIntegerField(primary_key=True)
@@ -127,19 +128,63 @@ def migrate_dealers():
         )
 
         print(f"Using dealer role ID: {dealer_role.id}")
+        # Hash the password using the salt
+        hashed_password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+
+        # Migrate from source user table
+        for record in User.select().where(User.usertype == "Installer"):
+            try:
+                username = record.username or generate_username(record.full_name)
+                email = record.email.rstrip("-").strip().lower()
+
+                # Generate username and password
+                base_username = record.username or generate_username(record.full_name)
+                suffix = 1
+                username = base_username
+
+                while (
+                    DestinationUser.select()
+                    .where(DestinationUser.username == username)
+                    .exists()
+                ):
+                    username = f"{base_username}{suffix}"
+                    suffix += 1
+
+                # Create new user
+                new_user = DestinationUser.create(
+                    name=record.full_name,
+                    email=email,
+                    email_verified_at=datetime.now(),
+                    password=hashed_password,
+                    username=username,
+                    company=record.company,
+                    status="active" if record.activstate == 1 else "blocked",
+                    phone=None,
+                    mobile=record.mobile,
+                    timezone="UTC",
+                    country=record.country,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
+                )
+
+                # Assign dealer role
+                ModelHasRole.create(
+                    role_id=dealer_role.id,
+                    model_type="App\\Models\\User",
+                    model_id=new_user.id,
+                )
+
+            except Exception as e:
+                print(f"Unexpected error migrating dealer {new_user.company}: {str(e)}")
+                print(e)
 
         # Migrate each dealer
         for dealer in DealerMaster.select():
             try:
-                # Hash the password using the salt
-                hashed_password = (
-                    "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
-                )
-
                 username = dealer.company.lower().replace(" ", "_")
 
                 # Create user record for dealer
-                new_user = DestinationUser.create(
+                new_dealer_user = DestinationUser.create(
                     name=dealer.company,
                     email=dealer.email,
                     password=hashed_password,
@@ -159,7 +204,7 @@ def migrate_dealers():
                 ModelHasRole.create(
                     role_id=dealer_role.id,
                     model_type="App\\Models\\User",
-                    model_id=new_user.id,
+                    model_id=new_dealer_user.id,
                 )
 
                 for sub_user in User.select().where(User.company == dealer.company):
@@ -202,7 +247,7 @@ def migrate_dealers():
                         created_at=datetime.now(),
                         updated_at=datetime.now(),
                         emirates=dealer.emirate,
-                        parent_id=new_user.id,
+                        parent_id=new_dealer_user.id,
                     )
 
                     # Assign dealer role
@@ -213,7 +258,7 @@ def migrate_dealers():
                     )
 
                 print(
-                    f"Migrated dealer {dealer.company} (ID: {dealer.id}) to user ID: {new_user.id}"
+                    f"Migrated dealer {dealer.company} (ID: {dealer.id}) to user ID: {new_dealer_user.id}"
                 )
 
             except Exception as e:
@@ -303,7 +348,13 @@ def migrate_admin_users():
         )
 
         with dest_db.atomic():
-            for record in User.select().where(User.usertype == 'Admin').orwhere(User.usertype == 'Management').orwhere(User.usertype == 'Sales').orwhere(User.usertype == 'Service'):
+            for record in (
+                User.select()
+                .where(User.usertype == "Admin")
+                .orwhere(User.usertype == "Management")
+                .orwhere(User.usertype == "Sales")
+                .orwhere(User.usertype == "Service")
+            ):
                 try:
                     # Generate username and password
                     username = record.username or generate_username(record.full_name)

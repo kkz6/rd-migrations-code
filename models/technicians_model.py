@@ -89,7 +89,7 @@ def get_default_user():
     """Get or create a default user for cases where the original user doesn't exist"""
 
     return DestinationUser.get(
-        DestinationUser.email == "service@autograde.ae"
+        DestinationUser.email == "linoj@resloute-dynamics.com"
     )  # Replace with a known admin email
 
 

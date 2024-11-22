@@ -5,9 +5,11 @@ from peewee import (
     TimestampField,
     TextField,
     IntegerField,
+    CompositeKey,
 )
 from source_db import source_db
 from dest_db import dest_db
+
 
 # Source Model
 class CustomerMaster(Model):
@@ -38,10 +40,12 @@ class Customer(Model):
         database = dest_db
         table_name = "customers"
 
+
 class CustomerDealer(Model):
-    customer_id=BigIntegerField(),
-    dealer_id=BigIntegerField(),
+    customer_id = BigIntegerField()
+    dealer_id = BigIntegerField()
 
     class Meta:
         database = dest_db
         table_name = "customer_dealer"
+        primary_key = CompositeKey("customer_id", "dealer_id")
