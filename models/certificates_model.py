@@ -181,7 +181,7 @@ def migrate_certificates(log_file):
             continue
 
         try:
-            vehicle,created = Vehicle.get_or_create(
+            vehicle, created = Vehicle.get_or_create(
                 brand= record.vehicle_type,
                 vehicle_no=record.vehicle_registration,
                 vehicle_chassis_no=record.vehicle_chassis,

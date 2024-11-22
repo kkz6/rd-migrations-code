@@ -13,8 +13,6 @@ from peewee import (
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
-from id_mapping import user_id_mapper, dealer_id_mapper
-
 
 # Source Model
 class User(Model):
@@ -303,7 +301,7 @@ def migrate_admin_users():
         )
 
         with dest_db.atomic():
-            for record in User.select().where(User.usertype == 'Admin'):
+            for record in User.select().where(User.usertype == 'Admin').orwhere(User.usertype == 'Management').orwhere(User.usertype == 'Sales').orwhere(User.usertype == 'Service'):
                 try:
                     # Generate username and password
                     username = record.username or generate_username(
