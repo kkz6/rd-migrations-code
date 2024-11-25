@@ -132,7 +132,11 @@ def migrate_dealers():
         hashed_password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
 
         # Migrate from source user table
-        for record in User.select().where(User.usertype == "Installer"):
+        for record in (
+            User.select()
+            .where(User.usertype == "Installer")
+            .orwhere(User.usertype == "select")
+        ):
             try:
                 username = record.username or generate_username(record.full_name)
                 email = record.email.rstrip("-").strip().lower()

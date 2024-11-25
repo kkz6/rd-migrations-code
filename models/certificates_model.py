@@ -309,6 +309,8 @@ def migrate_certificates(log_file):
         print(f"Dealer ID: {record.dealer_id}")
         default_dealer = DestinationUser.select().first()
 
+        record_errors = []  # Collect all errors for the current record
+
         # Dealer mapping with detailed logs
         try:
             if record.dealer_id == 0:
@@ -317,23 +319,19 @@ def migrate_certificates(log_file):
                 dealer = get_dealer_mapping(str(record.dealer_id), log_file)
                 if not dealer:
                     raise ValueError(
-                        f"[Dealer Mapping] Dealer mapping failed for dealer ID {record.dealer_id}."
+                        f"No dealer mapping found for dealer ID {record.dealer_id}."
                     )
         except Exception as e:
-            error_msg = f"[Dealer Mapping] Error for ECU {record.ecu}: {e}"
+            error_msg = f"[Dealer Mapping] Error for dealer ID {record.dealer_id}: {e}"
             print(error_msg, file=log_file)
-            skipped_count += 1
-            ignored_rows.append((record, error_msg))
-            continue
+            record_errors.append(error_msg)
 
         try:
             user = get_user_mapping(str(record.installer_user_id), log_file) or dealer
         except Exception as e:
-            error_msg = f"[User Mapping] Error for ECU {record.ecu}: {e}"
+            error_msg = f"[User Mapping] Error for installer user ID {record.installer_user_id}: {e}"
             print(error_msg, file=log_file)
-            skipped_count += 1
-            ignored_rows.append((record, error_msg))
-            continue
+            record_errors.append(error_msg)
 
         try:
             vehicle, created = Vehicle.get_or_create(
@@ -343,40 +341,51 @@ def migrate_certificates(log_file):
                 new_registration=False,
                 model=record.vehicle_type,
             )
-            print(f"Created new vehicle record for ECU {record.ecu}")
         except IntegrityError:
-            print(f"Vehicle already exists for ECU {record.ecu}")
+            vehicle = Vehicle.get_or_none(vehicle_no=record.vehicle_registration)
+        except Exception as e:
+            error_msg = (
+                f"[Vehicle Mapping] Error creating vehicle for ECU {record.ecu}: {e}"
+            )
+            print(error_msg, file=log_file)
+            record_errors.append(error_msg)
 
         customer = create_and_assign_customer(
             record.customer_id, record.dealer_id, log_file
         )
+        if not customer:
+            error_msg = f"[Customer Mapping] Failed to map or create customer for customer ID {record.customer_id}"
+            record_errors.append(error_msg)
 
         technician = create_assign_technician(record)
+        if not technician:
+            error_msg = f"[Technician Mapping] Failed to map or create technician for technician ID {record.installer_technician_id or record.installer_user_id}"
+            record_errors.append(error_msg)
 
         device = Device.get_or_none(Device.ecu_number == record.ecu)
+        if not device:
+            error_msg = f"[Device Mapping] No device found for ECU {record.ecu}"
+            record_errors.append(error_msg)
 
         # Convert speed value by removing any non-numeric characters
         speed_value = "".join(filter(str.isdigit, record.speed))
         speed_limit = int(speed_value) if speed_value else 0
 
         if not all([device, vehicle, customer, technician]):
-            missing_entities = []
+            error_msg = f"Missing related entities: {', '.join([e for e in ['device', 'vehicle', 'customer', 'technician'] if eval(e) is None])}"
+            record_errors.append(error_msg)
 
-            if not device:
-                missing_entities.append("device")
-            if not vehicle:
-                missing_entities.append("vehicle")
-            if not customer:
-                missing_entities.append("customer")
-            if not technician:
-                missing_entities.append("technician")
-
-            error_msg = f"Missing related entities: {', '.join(missing_entities)}"
-            print(f"Skipping ECU {record.ecu} - {error_msg}")
-            ignored_rows.append((record, error_msg))
+        if record_errors:
+            # Log detailed errors for this record
+            print(f"- ECU {record.ecu}: {error_msg}", file=log_file)
+            print(f"Detailed error log for ECU {record.ecu}:", file=log_file)
+            for err in record_errors:
+                print(err, file=log_file)
             skipped_count += 1
+            ignored_rows.append((record, error_msg))
             continue
 
+        # Create certificate if no issues
         certificate = Certificate.create(
             serial_number=record.serialno,
             status="active",
@@ -412,7 +421,6 @@ def migrate_certificates(log_file):
     if ignored_rows:
         print("\nDetailed error log:", file=log_file)
         for record, reason in ignored_rows:
-            print(f"- ECU {record.ecu}: {reason}", file=log_file)
             print(f"- ECU {record.ecu}: {reason}", file=log_file)
 
 
