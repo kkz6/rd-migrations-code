@@ -2,8 +2,8 @@ import tempfile
 from typing import Optional
 from peewee import *
 from datetime import datetime
-from models.users_model import DestinationUser, User
-from models.technicians_model import Technician
+from models.users_model import DealerMaster, DestinationUser, User
+from models.technicians_model import Technician, TechnicianMaster
 from models.customers_model import Customer, CustomerMaster, CustomerDealer
 from models.devices_model import Device
 from models.vehicles_model import Vehicle
@@ -86,18 +86,26 @@ class Certificate(Model):
 
 def clean_email(email: str) -> str:
     cleaned = email.strip().rstrip("-").strip()
-    if not "@" in cleaned:
-        raise ValueError(f"Invalid email format after cleaning: {cleaned}")
+    # if not "@" in cleaned:
+    #     raise ValueError(f"Invalid email format after cleaning: {cleaned}")
     return cleaned
 
 
 def get_dealer_mapping(source_dealer_id) -> Optional[str]:
-    """
-    Get destination dealer ID for a given source dealer ID.
-    Returns None if mapping doesn't exist.
-    """
-    sourceUser = User.get(User.id == source_dealer_id)
-    return DestinationUser.get(DestinationUser.email == clean_email(sourceUser.email))
+    try:
+        dealer = DealerMaster.get(DealerMaster.id == source_dealer_id)
+        try:
+            return DestinationUser.get(
+                DestinationUser.email == clean_email(dealer.email)
+            )
+        except DoesNotExist:
+            print(
+                f"Warning: No destination user found for dealer ID {source_dealer_id}"
+            )
+            return None
+    except DoesNotExist:
+        print(f"Warning: No source user found with dealer ID {source_dealer_id}")
+        return None
 
 
 def get_user_mapping(source_user_id: str) -> Optional[str]:
@@ -120,69 +128,153 @@ def get_user_mapping(source_user_id: str) -> Optional[str]:
 
 
 def create_and_assign_customer(customer_id, dealer_id):
-    sourceCustomer = CustomerMaster.get(CustomerMaster.id == customer_id)
-    sourceUser = User.get(User.id == sourceCustomer.user_id)
-    user = DestinationUser.get(DestinationUser.email == clean_email(sourceUser.email))
+    try:
+        sourceCustomer = CustomerMaster.get(CustomerMaster.id == customer_id)
+    except DoesNotExist:
+        print(f"Warning: Customer with ID {customer_id} not found in source database")
+        return None
 
-    dealer = User.get(User.id == dealer_id)
-    print("dest dealer", dealer.email)
-    destDealer = DestinationUser.get(DestinationUser.email == clean_email(dealer.email))
-    customer, created = Customer.get_or_create(
-        email=clean_email(sourceCustomer.email),
-        defaults={
-            "name": sourceCustomer.company,
-            "address": sourceCustomer.o_address,
-            "contact_number": sourceCustomer.o_contactphone,
-            "user_id": user.id,
-        },
-    )
-    cust_dealer = CustomerDealer.get_or_create(
-        customer_id=customer.id, dealer_id=destDealer.id
-    )
-    return customer
-
-
-def create_assign_technician(certificate):
-    created_by = DestinationUser.get(
-        DestinationUser.email == "linoj@resloute-dynamics.com"
-    )
-
-    # If installer_technician_id is 0, use installer details
-    if certificate.installer_technician_id == 0:
-        technician_user = User.get(User.id == certificate.installer_user_id)
-        technician, created = Technician.get_or_create(
-            email=clean_email(technician_user.email),
-            name=technician_user.full_name,
-            defaults={
-                "phone": technician_user.mobile,
-                "user_id": technician_user.id,
-                "created_by": created_by.id,
-            },
-        )
-    # If installer_technician_id is not 0, use technician details
-    else:
-        print("test before create technician")
-        technician = Technician.get(
-            Technician.id == certificate.installer_technician_id
-        )
-        sourceUser = User.get(User.id == technician.user_id)
+    try:
+        sourceUser = User.get(User.id == sourceCustomer.user_id)
         user = DestinationUser.get(
             DestinationUser.email == clean_email(sourceUser.email)
         )
-        print("test before create technician", technician.id)
+    except DoesNotExist:
+        print(f"Warning: User not found for customer {customer_id}")
+        return None
 
-        technician, created = Technician.get_or_create(
-            name=technician.name,
-            email=technician.email,
+    try:
+        dealer = DealerMaster.get(DealerMaster.id == dealer_id)
+        destDealer = DestinationUser.get(
+            DestinationUser.email == clean_email(dealer.email)
+        )
+    except DoesNotExist:
+        print(f"Warning: Dealer with ID {dealer_id} not found")
+        try:
+            default_dealer = DealerMaster.select().first()
+            if not default_dealer:
+                print("Error: No dealers exist in the source database")
+                return None
+            destDealer = DestinationUser.get(
+                DestinationUser.email == clean_email(default_dealer.email)
+            )
+        except DoesNotExist:
+            print("Error: Could not find default dealer in destination database")
+            return None
+
+    try:
+        customer, created = Customer.get_or_create(
+            email=clean_email(sourceCustomer.email),
             defaults={
-                "phone": technician.phone,
+                "name": sourceCustomer.company,
+                "address": sourceCustomer.o_address,
+                "contact_number": sourceCustomer.o_contactphone,
                 "user_id": user.id,
-                "created_by": created_by.id,
             },
         )
-        print("else test after create technician", technician.id)
 
-    return technician
+        try:
+            cust_dealer, dealer_created = CustomerDealer.get_or_create(
+                customer_id=customer.id, dealer_id=destDealer.id
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create customer-dealer relationship: {e}")
+            pass
+
+        return customer
+
+    except Exception as e:
+        print(f"Error creating customer record: {e}")
+        return None
+
+
+def create_assign_technician(certificate):
+    try:
+        created_by = DestinationUser.get(
+            DestinationUser.email == "linoj@resloute-dynamics.com"
+        )
+    except DoesNotExist:
+        try:
+            created_by = DestinationUser.select().first()
+            if not created_by:
+                print("Error: No destination users exist to assign as creator")
+                return None
+        except Exception as e:
+            print(f"Error getting default created_by user: {e}")
+            return None
+
+    try:
+        if certificate.installer_technician_id == 0:
+            try:
+                technician_user = User.get(User.id == certificate.installer_user_id)
+            except DoesNotExist:
+                print(
+                    f"Error: Installer user {certificate.installer_user_id} not found"
+                )
+                return None
+
+            try:
+                technician, created = Technician.get_or_create(
+                    email=clean_email(technician_user.email),
+                    name=technician_user.full_name,
+                    defaults={
+                        "phone": technician_user.mobile,
+                        "user_id": technician_user.id,
+                        "created_by": created_by.id,
+                    },
+                )
+                return technician
+            except Exception as e:
+                print(f"Error creating technician from installer: {e}")
+                return None
+
+        else:
+            try:
+                source_technician = TechnicianMaster.get(
+                    TechnicianMaster.id == certificate.installer_technician_id
+                )
+            except DoesNotExist:
+                print(
+                    f"Error: Source technician {certificate.installer_technician_id} not found"
+                )
+                return None
+
+            try:
+                sourceUser = User.get(User.id == source_technician.user_id)
+            except DoesNotExist:
+                print(
+                    f"Error: User not found for technician {certificate.installer_technician_id}"
+                )
+                return None
+
+            try:
+                user = DestinationUser.get(
+                    DestinationUser.email == clean_email(sourceUser.email)
+                )
+            except DoesNotExist:
+                print(
+                    f"Error: Destination user not found for email {clean_email(sourceUser.email)}"
+                )
+                return None
+
+            try:
+                technician, created = Technician.get_or_create(
+                    name=source_technician.technician_name,
+                    email=source_technician.technician_email,
+                    defaults={
+                        "phone": source_technician.technician_phone,
+                        "user_id": user.id,
+                        "created_by": created_by.id,
+                    },
+                )
+                return technician
+            except Exception as e:
+                print(f"Error creating technician from existing technician: {e}")
+                return None
+
+    except Exception as e:
+        print(f"Unexpected error in create_assign_technician: {e}")
+        return None
 
 
 def migrate_certificates(log_file):
@@ -203,8 +295,23 @@ def migrate_certificates(log_file):
 
     for record in CertificateRecord.select():
         print(f"Processing ECU {record.ecu}")
+        print(f"Dealer ID: {record.dealer_id}")
+        default_dealer = DestinationUser.select().first()
+
         try:
-            dealer = get_dealer_mapping(str(record.dealer_id))
+            if record.dealer_id == 0:
+                dealer = default_dealer
+            else:
+                dealer = get_dealer_mapping(str(record.dealer_id))
+
+        except Exception as e:
+            print(f"Error getting dealer for ECU {record.ecu}: {e}")
+
+            if default_dealer:
+                dealer = default_dealer
+            else:
+                print(f"Skipping ECU {record.ecu}: No dealer found")
+                continue
         except Exception as e:
             print(f"Error getting dealer for ECU {record.ecu}: {e}")
             skipped_count += 1
@@ -213,6 +320,8 @@ def migrate_certificates(log_file):
 
         try:
             user = get_user_mapping(str(record.installer_user_id))
+            if not user:
+                user = dealer
         except Exception as e:
             print(f"Error getting user for ECU {record.ecu}: {e}")
             skipped_count += 1
@@ -241,12 +350,17 @@ def migrate_certificates(log_file):
         speed_value = "".join(filter(str.isdigit, record.speed))
         speed_limit = int(speed_value) if speed_value else 0
 
-        if not all([device, vehicle]):
+        if not all([device, vehicle, customer, technician]):
             missing_entities = []
+
             if not device:
                 missing_entities.append("device")
             if not vehicle:
                 missing_entities.append("vehicle")
+            if not customer:
+                missing_entities.append("customer")
+            if not technician:
+                missing_entities.append("technician")
 
             error_msg = f"Missing related entities: {', '.join(missing_entities)}"
             print(f"Skipping ECU {record.ecu} - {error_msg}")
@@ -258,7 +372,7 @@ def migrate_certificates(log_file):
             serial_number=record.serialno,
             status="active",
             device_id=device.id,
-            installation_date=record.date_actual_installation,
+            installation_date=record.date_actual_installation or current_time,
             calibration_date=record.date_calibrate,
             expiry_date=record.date_expiry,
             km_reading=record.kilometer or 0,
