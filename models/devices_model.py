@@ -203,6 +203,18 @@ def migrate_devices():
 
 current_time = datetime.now()
 ecm_mapping = {
+    "D1005E": {
+        "device_type": "Fuel Type Speed Limiter",
+        "device_model": "AutoGrade Dass86",
+        "device_variant": "",
+        "approval_code": "24-01-22784/Q24-01-048943/NB0002",
+    },
+    "D1005E": {
+        "device_type": "Fuel Type Speed Limiter",
+        "device_model": "AutoGrade Dass86",
+        "device_variant": "",
+        "approval_code": "24-01-22784/Q24-01-048943/NB0002",
+    },
     "S100": {
         "device_type": "Electronic Type Speed Limiter",
         "device_model": "Autograde Safedrive",
