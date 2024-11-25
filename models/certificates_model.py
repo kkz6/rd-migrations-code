@@ -91,7 +91,7 @@ def clean_email(email: str) -> str:
     return cleaned
 
 
-def get_dealer_mapping(source_dealer_id) -> Optional[str]:
+def get_dealer_mapping(source_dealer_id, log_file) -> Optional[DestinationUser]:
     try:
         dealer = DealerMaster.get(DealerMaster.id == source_dealer_id)
         try:
@@ -99,43 +99,54 @@ def get_dealer_mapping(source_dealer_id) -> Optional[str]:
                 DestinationUser.email == clean_email(dealer.email)
             )
         except DoesNotExist:
-            print(
-                f"Warning: No destination user found for dealer ID {source_dealer_id}"
+            error_msg = (
+                f"[Dealer Mapping] No destination user found for dealer ID {source_dealer_id}. "
+                f"Issue occurred in `get_dealer_mapping`."
             )
+            print(error_msg, file=log_file)
             return None
     except DoesNotExist:
-        print(f"Warning: No source user found with dealer ID {source_dealer_id}")
+        error_msg = (
+            f"[Dealer Mapping] No source user found with dealer ID {source_dealer_id}. "
+            f"Issue occurred in `get_dealer_mapping`."
+        )
+        print(error_msg, file=log_file)
         return None
 
 
-def get_user_mapping(source_user_id: str) -> Optional[str]:
-    """
-    Get destination dealer ID for a given source dealer ID.
-    Returns None if mapping doesn't exist.
-    """
+def get_user_mapping(source_user_id: str, log_file) -> Optional[DestinationUser]:
     try:
-        sourceUser = User.get(User.id == source_user_id)
+        source_user = User.get(User.id == source_user_id)
         try:
             return DestinationUser.get(
-                DestinationUser.email == clean_email(sourceUser.email)
+                DestinationUser.email == clean_email(source_user.email)
             )
         except DoesNotExist:
-            print(f"Warning: No destination user found for email {sourceUser.email}")
+            error_msg = (
+                f"[User Mapping] No destination user found for email {source_user.email}. "
+                f"Issue occurred in `get_user_mapping`."
+            )
+            print(error_msg, file=log_file)
             return None
     except DoesNotExist:
-        print(f"Warning: No source user found with ID {source_user_id}")
+        error_msg = (
+            f"[User Mapping] No source user found with ID {source_user_id}. "
+            f"Issue occurred in `get_user_mapping`."
+        )
+        print(error_msg, file=log_file)
         return None
 
 
-def create_and_assign_customer(customer_id, dealer_id):
+def create_and_assign_customer(customer_id, dealer_id, log_file):
     try:
-        sourceCustomer = CustomerMaster.get(CustomerMaster.id == customer_id)
+        source_customer = CustomerMaster.get(CustomerMaster.id == customer_id)
     except DoesNotExist:
-        print(f"Warning: Customer with ID {customer_id} not found in source database")
+        error_msg = f"[Customer Mapping] Customer with ID {customer_id} not found in source database."
+        print(error_msg, file=log_file)
         return None
 
     try:
-        sourceUser = User.get(User.id == sourceCustomer.user_id)
+        sourceUser = User.get(User.id == source_customer.user_id)
         user = DestinationUser.get(
             DestinationUser.email == clean_email(sourceUser.email)
         )
@@ -164,11 +175,11 @@ def create_and_assign_customer(customer_id, dealer_id):
 
     try:
         customer, created = Customer.get_or_create(
-            email=clean_email(sourceCustomer.email),
+            email=clean_email(source_customer.email),
             defaults={
-                "name": sourceCustomer.company,
-                "address": sourceCustomer.o_address,
-                "contact_number": sourceCustomer.o_contactphone,
+                "name": source_customer.company,
+                "address": source_customer.o_address,
+                "contact_number": source_customer.o_contactphone,
                 "user_id": user.id,
             },
         )
@@ -298,34 +309,30 @@ def migrate_certificates(log_file):
         print(f"Dealer ID: {record.dealer_id}")
         default_dealer = DestinationUser.select().first()
 
+        # Dealer mapping with detailed logs
         try:
             if record.dealer_id == 0:
                 dealer = default_dealer
             else:
-                dealer = get_dealer_mapping(str(record.dealer_id))
-
+                dealer = get_dealer_mapping(str(record.dealer_id), log_file)
+                if not dealer:
+                    raise ValueError(
+                        f"[Dealer Mapping] Dealer mapping failed for dealer ID {record.dealer_id}."
+                    )
         except Exception as e:
-            print(f"Error getting dealer for ECU {record.ecu}: {e}")
-
-            if default_dealer:
-                dealer = default_dealer
-            else:
-                print(f"Skipping ECU {record.ecu}: No dealer found")
-                continue
-        except Exception as e:
-            print(f"Error getting dealer for ECU {record.ecu}: {e}")
+            error_msg = f"[Dealer Mapping] Error for ECU {record.ecu}: {e}"
+            print(error_msg, file=log_file)
             skipped_count += 1
-            ignored_rows.append((record, f"Dealer mapping error: {e}"))
+            ignored_rows.append((record, error_msg))
             continue
 
         try:
-            user = get_user_mapping(str(record.installer_user_id))
-            if not user:
-                user = dealer
+            user = get_user_mapping(str(record.installer_user_id), log_file) or dealer
         except Exception as e:
-            print(f"Error getting user for ECU {record.ecu}: {e}")
+            error_msg = f"[User Mapping] Error for ECU {record.ecu}: {e}"
+            print(error_msg, file=log_file)
             skipped_count += 1
-            ignored_rows.append((record, f"User mapping error: {e}"))
+            ignored_rows.append((record, error_msg))
             continue
 
         try:
@@ -340,7 +347,9 @@ def migrate_certificates(log_file):
         except IntegrityError:
             print(f"Vehicle already exists for ECU {record.ecu}")
 
-        customer = create_and_assign_customer(record.customer_id, record.dealer_id)
+        customer = create_and_assign_customer(
+            record.customer_id, record.dealer_id, log_file
+        )
 
         technician = create_assign_technician(record)
 
@@ -388,29 +397,27 @@ def migrate_certificates(log_file):
         )
 
         print(
-            f"Successfully migrated Certificate: ECU {record.ecu} and updated vehicle reference"
+            f"[Success] Successfully migrated Certificate for ECU {record.ecu}.",
+            file=log_file,
         )
         migrated_count += 1
 
-    # Print migration summary
-    print(f"\n Migration from certificates to certificates table ", file=log_file)
-    print(f"\n Summary:", file=log_file)
+    # Summary logs
+    print("\nMigration Summary:", file=log_file)
     print(f"Total records processed: {total_records}", file=log_file)
     print(f"Successfully migrated: {migrated_count}", file=log_file)
     print(f"Skipped/Failed: {skipped_count}", file=log_file)
-    print(f"Success rate: {(migrated_count/total_records)*100:.2f}%", file=log_file)
+    print(f"Success rate: {(migrated_count / total_records) * 100:.2f}%", file=log_file)
 
     if ignored_rows:
         print("\nDetailed error log:", file=log_file)
         for record, reason in ignored_rows:
             print(f"- ECU {record.ecu}: {reason}", file=log_file)
+            print(f"- ECU {record.ecu}: {reason}", file=log_file)
 
 
 def run_migration():
-    """Main function to run the complete migration process"""
-
     try:
-        # Ask for confirmation before cleanup
         response = input(
             "This will delete all existing records in the destination table. Are you sure? (yes/no): "
         )

@@ -131,6 +131,53 @@ def migrate_dealers():
         # Hash the password using the salt
         hashed_password = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
 
+        # Migrate from source user table
+        for record in User.select().where(User.usertype == "Installer"):
+            try:
+                username = record.username or generate_username(record.full_name)
+                email = record.email.rstrip("-").strip().lower()
+
+                # Generate username and password
+                base_username = record.username or generate_username(record.full_name)
+                suffix = 1
+                username = base_username
+
+                while (
+                    DestinationUser.select()
+                    .where(DestinationUser.username == username)
+                    .exists()
+                ):
+                    username = f"{base_username}{suffix}"
+                    suffix += 1
+
+                # Create new user
+                new_user = DestinationUser.create(
+                    name=record.full_name,
+                    email=email,
+                    email_verified_at=datetime.now(),
+                    password=hashed_password,
+                    username=username,
+                    company=record.company,
+                    status="active" if record.activstate == 1 else "blocked",
+                    phone=None,
+                    mobile=record.mobile,
+                    timezone="UTC",
+                    country=record.country,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
+                )
+
+                # Assign dealer role
+                ModelHasRole.create(
+                    role_id=dealer_role.id,
+                    model_type="App\\Models\\User",
+                    model_id=new_user.id,
+                )
+
+            except Exception as e:
+                print(f"Unexpected error migrating dealer {new_user.company}: {str(e)}")
+                print(e)
+
         # Migrate each dealer
         for dealer in DealerMaster.select():
             try:
