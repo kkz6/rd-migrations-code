@@ -306,6 +306,7 @@ def migrate_certificates(log_file):
 
     for record in CertificateRecord.select():
         print(f"Processing ECU {record.ecu}")
+        print(f"log path: {log_file.name}")
         print(f"Dealer ID: {record.dealer_id}")
         default_dealer = DestinationUser.select().first()
 
@@ -349,6 +350,7 @@ def migrate_certificates(log_file):
             )
             print(error_msg, file=log_file)
             record_errors.append(error_msg)
+            vehicle = None  # Explicitly set to None on error
 
         customer = create_and_assign_customer(
             record.customer_id, record.dealer_id, log_file
@@ -363,19 +365,28 @@ def migrate_certificates(log_file):
             record_errors.append(error_msg)
 
         device = Device.get_or_none(Device.ecu_number == record.ecu)
+        print(f"Device: {device}")
         if not device:
             error_msg = f"[Device Mapping] No device found for ECU {record.ecu}"
             record_errors.append(error_msg)
 
-        # Convert speed value by removing any non-numeric characters
-        speed_value = "".join(filter(str.isdigit, record.speed))
-        speed_limit = int(speed_value) if speed_value else 0
+        # Check for required entities and skip record if any are missing
+        required_entities = {
+            "device": device,
+            "vehicle": vehicle,
+            "customer": customer,
+            "technician": technician,
+            "dealer": dealer,
+            "user": user,
+        }
 
-        if not all([device, vehicle, customer, technician]):
-            error_msg = f"Missing related entities: {', '.join([e for e in ['device', 'vehicle', 'customer', 'technician'] if eval(e) is None])}"
+        missing_entities = [
+            name for name, entity in required_entities.items() if not entity
+        ]
+
+        if missing_entities:
+            error_msg = f"Missing required entities: {', '.join(missing_entities)}"
             record_errors.append(error_msg)
-
-        if record_errors:
             # Log detailed errors for this record
             print(f"- ECU {record.ecu}: {error_msg}", file=log_file)
             print(f"Detailed error log for ECU {record.ecu}:", file=log_file)
@@ -383,33 +394,46 @@ def migrate_certificates(log_file):
                 print(err, file=log_file)
             skipped_count += 1
             ignored_rows.append((record, error_msg))
+            continue  # Skip to next record
+
+        # Only proceed with certificate creation if all required entities exist
+        try:
+            # Convert speed value by removing any non-numeric characters
+            speed_value = "".join(filter(str.isdigit, record.speed))
+            speed_limit = int(speed_value) if speed_value else 0
+
+            certificate = Certificate.create(
+                serial_number=record.serialno,
+                status="active",
+                device_id=device.id,
+                installation_date=record.date_actual_installation or current_time,
+                calibration_date=record.date_calibrate,
+                expiry_date=record.date_expiry,
+                km_reading=record.kilometer or 0,
+                speed_limit=speed_limit,
+                print_count=record.print_count,
+                renewal_count=record.renewal_count,
+                description=record.description,
+                dealer_id=dealer.id,
+                user_id=user.id or dealer.id,
+                installed_by_id=technician.id,
+                installed_for_id=customer.id,
+                vehicle_id=vehicle.id,
+            )
+
+            print(
+                f"[Success] Successfully migrated Certificate for ECU {record.ecu}.",
+                file=log_file,
+            )
+            migrated_count += 1
+
+        except Exception as e:
+            error_msg = f"[Certificate Creation] Failed to create certificate: {str(e)}"
+            record_errors.append(error_msg)
+            print(f"- ECU {record.ecu}: {error_msg}", file=log_file)
+            skipped_count += 1
+            ignored_rows.append((record, error_msg))
             continue
-
-        # Create certificate if no issues
-        certificate = Certificate.create(
-            serial_number=record.serialno,
-            status="active",
-            device_id=device.id,
-            installation_date=record.date_actual_installation or current_time,
-            calibration_date=record.date_calibrate,
-            expiry_date=record.date_expiry,
-            km_reading=record.kilometer or 0,
-            speed_limit=speed_limit,
-            print_count=record.print_count,
-            renewal_count=record.renewal_count,
-            description=record.description,
-            dealer_id=dealer.id,
-            user_id=user.id or dealer.id,
-            installed_by_id=technician.id,
-            installed_for_id=customer.id,
-            vehicle_id=vehicle.id,
-        )
-
-        print(
-            f"[Success] Successfully migrated Certificate for ECU {record.ecu}.",
-            file=log_file,
-        )
-        migrated_count += 1
 
     # Summary logs
     print("\nMigration Summary:", file=log_file)

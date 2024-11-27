@@ -40,7 +40,6 @@ class DeviceType(Model):
     user_id = BigIntegerField()
     created_at = TimestampField(null=True)
     updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db
@@ -58,7 +57,6 @@ class DeviceModel(Model):
     approval_code = CharField(max_length=255, default="0000")
     created_at = TimestampField(null=True)
     updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db
@@ -77,7 +75,6 @@ class DeviceVariant(Model):
     user_id = BigIntegerField()
     created_at = TimestampField(null=True)
     updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db  # Set the database connection
@@ -106,7 +103,6 @@ class Device(Model):
     blocked_description = BlobField(null=True)
     created_at = TimestampField(null=True)
     updated_at = TimestampField(null=True)
-    deleted_at = TimestampField(null=True)
 
     class Meta:
         database = dest_db  # Specifies which database to use
