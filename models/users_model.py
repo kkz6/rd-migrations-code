@@ -88,17 +88,84 @@ class DealerMaster(Model):
         database = source_db
         table_name = "dealer_master"
 
+def process_user_status_and_email(user):
+    """
+    Helper function to process a user's email and status based on:
+    - Email's trailing hyphen
+    - User's activstate
+    
+    Returns the processed email and status.
+    """
+    # Process email (remove trailing '-' if present)
+    email = user.email.rstrip("-").strip().lower()
+
+    # Check if the email ends with '-' and set status as blocked
+    status = "blocked" if user.email.endswith("-") else "active"
+    
+    # Update the status based on activstate
+    status = "active" if user.activstate == 1 else "blocked"
+    
+    # Return processed email and status
+    return email, status
+
 
 def run_migration():
     """
     Migrate dealers interactively by asking for user confirmation and selecting user IDs.
     """
+    if source_db.is_closed():
+        source_db.connect()
+    if dest_db.is_closed():
+        dest_db.connect()
+
+
     try:
+        print("Select how you want to start the migration:")
+        print("1. Start from the first dealer.")
+        print("2. Migrate a specific dealer by ID.")
+        print("3. Start from a specific dealer ID.")
+        
+        choice = input("Enter your choice (1/2/3): ").strip()
+
+        if choice == "1":
+            # Option 1: Start from the first dealer
+            print("Starting migration from the first dealer...")
+            dealers = DealerMaster.select().order_by(DealerMaster.id.desc())  # Sorting in descending order
+            start_dealer = None
+        
+        elif choice == "2":
+            # Option 2: Migrate specific dealer by ID
+            dealer_id = input("Enter the dealer ID to migrate: ").strip()
+            try:
+                start_dealer = DealerMaster.get(DealerMaster.id == int(dealer_id))
+                print(f"Starting migration for dealer: {start_dealer.company} (ID: {start_dealer.id})")
+                dealers = [start_dealer]
+            
+            except DealerMaster.DoesNotExist:
+                print(f"No dealer found with ID {dealer_id}. Please try again.")
+                return
+        
+        elif choice == "3":
+            # Option 3: Start from a specific dealer ID (for example, the user enters an ID)
+            start_dealer_id = input("Enter the dealer ID to start from: ").strip()
+            try:
+                dealers = DealerMaster.select().where(DealerMaster.id >= int(start_dealer_id)).order_by(DealerMaster.id.desc())
+                print(f"Starting migration from dealer ID {start_dealer_id} onward.")
+                start_dealer = None
+                
+            except ValueError:
+                print("Invalid dealer ID format. Please enter a valid numeric ID.")
+                return
+        
+        else:
+            print("Invalid choice. Exiting.")
+            return
+        
         migrated_user_ids = []  # Track migrated users to prevent showing them again
         first_migrated_user = None  # Track the first migrated user for sub-user parent ID updates
 
         # Step 1: Loop through the DealerMaster table
-        for dealer in DealerMaster.select().order_by(DealerMaster.id.desc()):
+        for dealer in dealers:
             print(f"\nMigrate {dealer.company}?")
             response = input("Type 'yes' to migrate or 'skip' to skip: ").strip().lower()
 
@@ -138,14 +205,17 @@ def run_migration():
 
                                 # Migrate user to destination user table
                                 # Call your migration logic here to create a user record in the destination table
+
+                                email, status = process_user_status_and_email(dealer)
+
                                 new_user = DestinationUser.create(
                                     name=selected_user.full_name,
-                                    email=selected_user.email,
+                                    email=email,
                                     email_verified_at=current_time,
                                     password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
                                     username=selected_user.username,
                                     company=selected_user.company,
-                                    status="active" if selected_user.activstate == 1 else "blocked",
+                                    status=status,
                                     phone=selected_user.mobile,
                                     mobile=selected_user.mobile,
                                     timezone="UTC",
@@ -159,10 +229,9 @@ def run_migration():
                                 # Update parent_id for any sub-users
                                 if first_migrated_user is not None:
                                     # Set the parent_id of sub-users to the first migrated user's ID
-                                    for sub_user in User.select().where(User.company == dealer.company, User.added_by_user_id == selected_user.id):
-                                        print(f"Updating parent_id for sub-user {sub_user.full_name} (ID: {sub_user.id})")
-                                        sub_user.parent_id = new_user.id
-                                        sub_user.save()
+                                    print(f"Updating parent_id for sub-user {new_user.name} (ID: {new_user.id})")
+                                    new_user.parent_id = new_user.id
+                                    new_user.save()
 
                                 # Add this migrated user's ID to the list
                                 migrated_user_ids.append(new_user.id)
@@ -174,6 +243,7 @@ def run_migration():
                                 # Step 6: Ask if they want to migrate more sub-users for the same dealer
                                 migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
                                 if migrate_more != "yes":
+                                    first_migrated_user = None
                                     break  # Exit the loop to proceed with the next dealer
 
                             elif action == "retry":
@@ -235,6 +305,7 @@ def run_migration():
                     # Step 8: Ask if they want to migrate more sub-users for the same dealer
                     migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
                     if migrate_more != "yes":
+                        first_migrated_user = None
                         continue  # Move on to the next dealer
 
             elif response == "skip":
