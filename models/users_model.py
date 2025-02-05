@@ -9,6 +9,7 @@ from peewee import (
     BooleanField,
     AutoField,
 )
+import sys
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
@@ -206,7 +207,7 @@ def run_migration():
                                 # Migrate user to destination user table
                                 # Call your migration logic here to create a user record in the destination table
 
-                                email, status = process_user_status_and_email(dealer)
+                                email, status = process_user_status_and_email(selected_user)
 
                                 new_user = DestinationUser.create(
                                     name=selected_user.full_name,
@@ -312,6 +313,14 @@ def run_migration():
                 continue  # Skip this dealer and move on to the next one
 
         print("Migration process complete.")
+    except KeyboardInterrupt:
+        print("\nMigration process interrupted. Exiting gracefully...")
+        # Close any open database connections
+        if not source_db.is_closed():
+            source_db.close()
+        if not dest_db.is_closed():
+            dest_db.close()
+        sys.exit(0)  # Exit gracefully
 
     except Exception as e:
         print(f"Error during migration: {str(e)}")
