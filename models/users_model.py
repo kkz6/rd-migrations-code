@@ -8,6 +8,7 @@ from peewee import (
     IntegerField,
     BooleanField,
     AutoField,
+    DateTimeField,
 )
 import sys
 from source_db import source_db
@@ -33,7 +34,7 @@ class User(Model):
     mobile = TextField(null=True)
     usertype = TextField(default="Installer")
     country = TextField(default="India")
-    add_date = TimestampField()
+    add_date = DateTimeField()
     added_by_user_id = IntegerField()
     forgotpassword = IntegerField(default=0)
     access_privilege_array = TextField()
@@ -54,7 +55,7 @@ class DestinationUser(Model):
     name = CharField(max_length=255, null=False)
     email = CharField(max_length=255, null=False)
     parent_id = BigIntegerField(null=True)
-    email_verified_at = TimestampField(null=True)
+    email_verified_at = DateTimeField(null=True)
     password = CharField(max_length=255, null=False)
     username = CharField(max_length=255, null=True, unique=True)
     company = CharField(max_length=255, null=True)
@@ -68,8 +69,8 @@ class DestinationUser(Model):
     country = CharField(max_length=255, null=True)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
-    created_at = TimestampField(null=True)
-    updated_at = TimestampField(null=True)
+    created_at = DateTimeField(null=True)
+    updated_at = DateTimeField(null=True)
 
 
     class Meta:
@@ -260,7 +261,7 @@ def run_migration():
 
                                 # Migrate user to destination user table
                                 # Call your migration logic here to create a user record in the destination table
-
+                                add_date = selected_user.add_date
                                 email, status = process_user_status_and_email(selected_user)
 
                                 new_user = DestinationUser.create(
@@ -275,8 +276,8 @@ def run_migration():
                                     mobile=selected_user.mobile,
                                     timezone="UTC",
                                     country=selected_user.country,
-                                    created_at=current_time,
-                                    updated_at=current_time,
+                                    created_at=add_date,
+                                    updated_at=add_date,
                                 )
 
                                 print(f"User {selected_user.full_name} migrated successfully!")
