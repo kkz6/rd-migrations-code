@@ -95,7 +95,7 @@ def run_migration():
         first_migrated_user = None  # Track the first migrated user for sub-user parent ID updates
 
         # Step 1: Loop through the DealerMaster table
-        for dealer in DealerMaster.select():
+        for dealer in DealerMaster.select().order_by(DealerMaster.id.desc()):
             print(f"\nMigrate {dealer.company}?")
             response = input("Type 'yes' to migrate or 'skip' to skip: ").strip().lower()
 
