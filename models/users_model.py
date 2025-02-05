@@ -139,7 +139,7 @@ def run_migration():
                                     email=selected_user.email,
                                     email_verified_at=datetime.now(),
                                     password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
-                                    username=generate_username(selected_user.full_name),
+                                    username=selected_user.username,
                                     company=selected_user.company,
                                     status="active" if selected_user.activstate == 1 else "blocked",
                                     phone=selected_user.mobile,
