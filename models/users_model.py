@@ -14,7 +14,7 @@ from dest_db import dest_db
 from peewee import IntegrityError
 import pymysql
 pymysql.install_as_MySQLdb()
-
+import pytz
 
 # Source Model
 class User(Model):
@@ -63,6 +63,9 @@ class DestinationUser(Model):
     country = CharField(max_length=255, null=True)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
+    created_at = TimestampField(null=True)
+    updated_at = TimestampField(null=True)
+
 
     class Meta:
         database = dest_db
@@ -131,13 +134,14 @@ def run_migration():
                             if action == "migrate":
                                 # Perform migration for the selected user
                                 print(f"\nMigrating user {selected_user.full_name}...")
+                                current_time = datetime.now(pytz.utc)
 
                                 # Migrate user to destination user table
                                 # Call your migration logic here to create a user record in the destination table
                                 new_user = DestinationUser.create(
                                     name=selected_user.full_name,
                                     email=selected_user.email,
-                                    email_verified_at=datetime.now(),
+                                    email_verified_at=current_time,
                                     password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
                                     username=selected_user.username,
                                     company=selected_user.company,
@@ -146,8 +150,8 @@ def run_migration():
                                     mobile=selected_user.mobile,
                                     timezone="UTC",
                                     country=selected_user.country,
-                                    created_at=datetime.now(),
-                                    updated_at=datetime.now(),
+                                    created_at=current_time,
+                                    updated_at=current_time,
                                 )
 
                                 print(f"User {selected_user.full_name} migrated successfully!")
@@ -202,20 +206,21 @@ def run_migration():
                             new_user_data[field] = user_input
 
                     # Create the new user record in the destination table
+                    current_time = datetime.now(pytz.utc)
                     new_user = DestinationUser.create(
                         name=new_user_data["name"],
                         email=new_user_data["email"],
-                        email_verified_at=datetime.now(),
+                        email_verified_at=current_time,
                         password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
-                        username=generate_username(new_user_data["name"]),
+                        username=new_user_data["username"],
                         company=new_user_data["company"],
                         status="active",
                         phone=new_user_data["mobile"],
                         mobile=new_user_data["mobile"],
                         timezone="UTC",
                         country=new_user_data["country"],
-                        created_at=datetime.now(),
-                        updated_at=datetime.now(),
+                        created_at=current_time,
+                        updated_at=current_time,
                     )
 
                     print(f"New user created successfully for {dealer.company}!")
