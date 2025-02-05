@@ -12,10 +12,14 @@ from peewee import (
 import sys
 from source_db import source_db
 from dest_db import dest_db
-from peewee import IntegrityError
 import pymysql
 pymysql.install_as_MySQLdb()
 import pytz
+import re
+import json
+
+MAPPING_FILE_PATH = "user_mappings.json"
+
 
 # Source Model
 class User(Model):
@@ -109,6 +113,47 @@ def process_user_status_and_email(user):
     # Return processed email and status
     return email, status
 
+def generate_unique_username(email):
+    """
+    Generate a unique username based on the email's local part (before @).
+    Ensures that the username is unique in the destination database by adding a numeric suffix if needed.
+    
+    Parameters:
+    email (str): The email address to generate the username from.
+
+    Returns:
+    str: A unique username.
+    """
+
+    # Step 1: Extract the local part of the email (before '@')
+    local_part = email.split('@')[0]  # Local part before '@'
+
+    # Step 2: Clean the local part:
+    # - Convert to lowercase
+    # - Remove special characters (except alphanumeric and underscores)
+    username = local_part.lower().strip()
+    username = re.sub(r"[^a-z0-9_]", "", username)  # Remove special characters
+
+    # Step 3: Check if the username exists in the destination database
+    base_username = username
+    suffix = 1
+    while DestinationUser.select().where(DestinationUser.username == username).exists():
+        username = f"{base_username}{suffix}"  # Add numeric suffix to the username
+        suffix += 1
+
+    # Return the unique username
+    return username
+
+def load_mappings():
+    try:
+        with open(MAPPING_FILE_PATH, "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return {}
+    
+def save_mappings(mappings):
+    with open(MAPPING_FILE_PATH, "w") as file:
+        json.dump(mappings, file, indent=4)
 
 def run_migration():
     """
@@ -119,6 +164,8 @@ def run_migration():
     if dest_db.is_closed():
         dest_db.connect()
 
+    # Load existing mappings
+    mappings = load_mappings()
 
     try:
         print("Select how you want to start the migration:")
@@ -196,7 +243,14 @@ def run_migration():
                             # Show the selected user details for confirmation
                             print(f"\nYou selected the following user:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
 
-                            # Step 5: Ask if they want to migrate this user
+                            # Step 5: Check if the user is already migrated
+                            if str(selected_user.id) in mappings:
+                                print(f"Warning: User with ID {selected_user.id} is already migrated!")
+                                proceed = input("Do you want to proceed with the migration? (yes/no): ").strip().lower()
+                                if proceed != "yes":
+                                    continue  # Skip this user and ask for another ID
+
+                            # Step 6: Ask if they want to migrate this user
                             action = input("Type 'migrate' to migrate this user, 'retry' to select a different user, or 'skip' to skip this user: ").strip().lower()
 
                             if action == "migrate":
@@ -241,7 +295,14 @@ def run_migration():
                                 if first_migrated_user is None:
                                     first_migrated_user = new_user
 
-                                # Step 6: Ask if they want to migrate more sub-users for the same dealer
+                                # Step 7: Update the mappings
+                                mappings[str(new_user.id)] = {
+                                    "old_user_id": selected_user.id,
+                                    "dealer_id": dealer.id
+                                }
+                                save_mappings(mappings)
+
+                                # Step 8: Ask if they want to migrate more sub-users for the same dealer
                                 migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
                                 if migrate_more != "yes":
                                     first_migrated_user = None
@@ -259,14 +320,15 @@ def run_migration():
                 else:
                     print(f"No users found for dealer {dealer.company}.")
 
-                    # Step 7: Ask the user to create a new user if no users are found for this company
+                    # Step 9: Ask the user to create a new user if no users are found for this company
                     print(f"\nCreating a new user for company: {dealer.company}")
                     new_user_data = {
                         "name": dealer.company,  # Default name based on the dealer company
                         "email": dealer.email,  # Default email
                         "company": dealer.company,
                         "mobile": dealer.phone,  # Default phone
-                        "country": "UAE",  # Default country based on dealer info
+                        "country": "UAE",  # Default country based on dealer info,
+                        "username" : generate_unique_username(dealer.email)
                     }
 
                     # Ask for input or use default values
@@ -303,7 +365,14 @@ def run_migration():
                     if first_migrated_user is None:
                         first_migrated_user = new_user
 
-                    # Step 8: Ask if they want to migrate more sub-users for the same dealer
+                    # Step 10: Update the mappings
+                    mappings[str(new_user.id)] = {
+                        "old_user_id": None,  # Since this is a new user, old_user_id is None
+                        "dealer_id": dealer.id
+                    }
+                    save_mappings(mappings)
+
+                    # Step 11: Ask if they want to migrate more sub-users for the same dealer
                     migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
                     if migrate_more != "yes":
                         first_migrated_user = None
