@@ -1,5 +1,4 @@
 from datetime import datetime
-import re
 from peewee import (
     Model,
     CharField,
@@ -13,6 +12,8 @@ from peewee import (
 from source_db import source_db
 from dest_db import dest_db
 from peewee import IntegrityError
+import pymysql
+pymysql.install_as_MySQLdb()
 
 
 # Source Model
@@ -106,8 +107,6 @@ class ModelHasRole(Model):
         table_name = "model_has_roles"
         indexes = ((("model_id", "model_type", "role_id"), True),)
 
-
-def migrate_dealers():
     """
     Migrate dealers from source to destination database and assign roles.
     Updates the migration_state with dealer ID mappings.
@@ -274,168 +273,6 @@ def migrate_dealers():
             source_db.close()
         if not dest_db.is_closed():
             dest_db.close()
-
-
-def clean_destination_table():
-    """
-    Clean up the destination table before migration.
-    Returns the number of records deleted.
-    """
-    try:
-        if dest_db.is_closed():
-            dest_db.connect()
-
-        with dest_db.atomic():
-            # Get the count before deletion
-            count_before = DestinationUser.select().count()
-
-            # Option 1: Hard delete (completely remove records)
-            DestinationUser.delete().execute()
-
-            count_after = DestinationUser.select().count()
-            deleted_count = count_before - count_after
-
-            print(f"Cleanup Summary:")
-            print(f"Records before cleanup: {count_before}")
-            print(f"Records after cleanup: {count_after}")
-            print(f"Total records deleted: {deleted_count}")
-
-            return deleted_count
-
-    except Exception as e:
-        print(f"Error during cleanup: {str(e)}")
-        raise
-    finally:
-        if not dest_db.is_closed():
-            dest_db.close()
-
-
-def generate_username(full_name):
-    """
-    Generate username from full name:
-    - Convert to lowercase
-    - Replace spaces with *
-    - Remove special characters
-    - Handle duplicates by adding number suffix if needed
-    """
-    # Convert to lowercase and replace spaces with *
-    username = full_name.lower().strip()
-    # Remove special characters except spaces
-    username = re.sub(r"[^a-z0-9\s]", "", username)
-    # Replace spaces with *
-    username = username.replace(" ", "*")
-    return username
-
-
-def migrate_admin_users():
-    """
-    Migrate users using the global ID mapper for relationship tracking.
-    """
-    ignored_rows = []
-    total_records = User.select().count()
-    migrated_count = 0
-    skipped_count = 0
-    updated_count = 0
-
-    if source_db.is_closed():
-        source_db.connect()
-    if dest_db.is_closed():
-        dest_db.connect()
-
-    try:
-        current_time = datetime.now()
-        # Get or create roles
-        admin_role, created = Role.get_or_create(
-            name="super_admin",
-            guard_name="web",
-            defaults={"created_at": current_time, "updated_at": current_time},
-        )
-
-        with dest_db.atomic():
-            for record in (
-                User.select()
-                .where(User.usertype == "Admin")
-                .orwhere(User.usertype == "Management")
-                .orwhere(User.usertype == "Sales")
-                .orwhere(User.usertype == "Service")
-            ):
-                try:
-                    # Generate username and password
-                    username = record.username or generate_username(record.full_name)
-                    password = (
-                        "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
-                    )
-                    email = record.email.rstrip("-").strip().lower()
-
-                    # Generate username and password
-                    base_username = record.username or generate_username(
-                        record.full_name
-                    )
-                    suffix = 1
-                    username = base_username
-
-                    while (
-                        DestinationUser.select()
-                        .where(DestinationUser.username == username)
-                        .exists()
-                    ):
-                        username = f"{base_username}{suffix}"
-                        suffix += 1
-
-                    # Create new user
-                    new_user = DestinationUser.create(
-                        name=record.full_name,
-                        email=email,
-                        email_verified_at=datetime.now(),
-                        password=password,
-                        username=username,
-                        company=record.company,
-                        status="active" if record.activstate == 1 else "blocked",
-                        phone=None,
-                        mobile=record.mobile,
-                        timezone="UTC",
-                        country=record.country,
-                        created_at=datetime.now(),
-                        updated_at=datetime.now(),
-                    )
-
-                    ModelHasRole.create(
-                        role_id=admin_role.id,
-                        model_type="App\\Models\\User",
-                        model_id=new_user.id,
-                    )
-
-                    print(
-                        f"Migrated User: {record.full_name} (Old ID: {record.id}, New ID: {new_user.id})"
-                    )
-                    migrated_count += 1
-
-                except Exception as e:
-                    print(f"Error migrating {record.full_name}: {e}")
-                    ignored_rows.append((record, str(e)))
-                    skipped_count += 1
-
-    finally:
-        if not source_db.is_closed():
-            source_db.close()
-        if not dest_db.is_closed():
-            dest_db.close()
-
-    # Print migration summary
-    print(f"\nMigration Summary:")
-    print(f"Total records processed: {total_records}")
-    print(f"Successfully migrated (new): {migrated_count}")
-    print(f"Successfully updated: {updated_count}")
-    print(f"Skipped/Failed: {skipped_count}")
-    print(
-        f"Total success rate: {((migrated_count + updated_count) / total_records * 100):.2f}%"
-    )
-
-    if ignored_rows:
-        print("\nDetailed error log:")
-        for user, reason in ignored_rows:
-            print(f"- {user.full_name} ({user.email}): {reason}")
-
 
 def run_migration():
     """

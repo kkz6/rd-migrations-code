@@ -1,15 +1,15 @@
 from source_db import source_db
 from dest_db import dest_db
 from models.users_model import run_migration as run_users_migration
-from models.vehicles_model import run_migration as run_vehicles_migration
-from models.devices_model import run_migration as run_devices_migration
-from models.certificates_model import run_migration as run_certificates_migration
+# from models.vehicles_model import run_migration as run_vehicles_migration
+# from models.devices_model import run_migration as run_devices_migration
+# from models.certificates_model import run_migration as run_certificates_migration
+import pymysql
+pymysql.install_as_MySQLdb()
 
 
 def migrate_data():
     # Connect to the source and destination databases
-    source_db.connect()
-    dest_db.connect()
 
     try:
         run_users_migration()
