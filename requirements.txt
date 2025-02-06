@@ -1,3 +1,6 @@
 peewee==3.17.8
+prompt_toolkit==3.0.50
 PyMySQL==1.1.1
 pytz==2025.1
+questionary==2.1.0
+wcwidth==0.2.13
