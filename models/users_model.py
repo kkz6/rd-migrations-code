@@ -428,8 +428,8 @@ def run_migration() -> None:
                             mobile=new_user_data["mobile"],
                             timezone=DEFAULT_TIMEZONE,
                             country=new_user_data["country"],
-                            created_at=current_time,
-                            updated_at=current_time,
+                            created_at=dealer.add_date,
+                            updated_at=dealer.add_date,
                         )
                         # If a first migrated user already exists, update the parent_id.
                         if first_migrated_user:
