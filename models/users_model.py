@@ -264,6 +264,7 @@ def run_migration() -> None:
     Main migration function with an interactive CLI.
     For each dealer, once the first user is migrated or created,
     that user's ID will be used as the parent_id for all further users.
+    Yes/no prompts have been replaced with select-based (radio button) UIs.
     """
     mappings = load_mappings()
     start_option = choose_start_option()
@@ -281,9 +282,9 @@ def run_migration() -> None:
             dealer_response = safe_ask(
                 questionary.select,
                 f"Migrate {dealer.company}?",
-                choices=["yes", "skip"],
+                choices=["Yes", "Skip"],
             )
-            if dealer_response != "yes":
+            if dealer_response != "Yes":
                 first_migrated_user = None  # Reset for new dealer.
                 continue
 
@@ -349,11 +350,11 @@ def run_migration() -> None:
                             print(f"\nYou selected:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
                             if str(selected_user.id) in mappings:
                                 proceed = safe_ask(
-                                    questionary.confirm,
+                                    questionary.select,
                                     "This user is already migrated. Proceed anyway?",
-                                    default=False,
+                                    choices=["Yes", "No"],
                                 )
-                                if not proceed:
+                                if proceed == "No":
                                     continue
                             action = safe_ask(
                                 questionary.select,
@@ -367,7 +368,6 @@ def run_migration() -> None:
                                     if not first_migrated_user:
                                         first_migrated_user = new_user
                                     else:
-                                        # Ensure the new user gets the parent's id if not already set.
                                         if new_user.parent_id is None:
                                             new_user.parent_id = first_migrated_user.id
                                             new_user.save()
@@ -375,11 +375,11 @@ def run_migration() -> None:
                                     mappings[str(new_user.id)] = {"old_user_id": selected_user.id, "dealer_id": dealer.id}
                                     save_mappings(mappings)
                                     more = safe_ask(
-                                        questionary.confirm,
+                                        questionary.select,
                                         "Do you want to migrate more users from the same company?",
-                                        default=True,
+                                        choices=["Yes", "No"],
                                     )
-                                    if not more:
+                                    if more == "No":
                                         first_migrated_user = None
                                         skip_dealer = True
                                 break
@@ -443,11 +443,11 @@ def run_migration() -> None:
                         mappings[str(new_user.id)] = {"old_user_id": None, "dealer_id": dealer.id}
                         save_mappings(mappings)
                         more = safe_ask(
-                            questionary.confirm,
+                            questionary.select,
                             "Do you want to migrate more users from the same company?",
-                            default=True,
+                            choices=["Yes", "No"],
                         )
-                        if not more:
+                        if more == "No":
                             first_migrated_user = None
                             skip_dealer = True
                     except IntegrityError as e:
