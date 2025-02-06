@@ -9,6 +9,7 @@ from peewee import (
     BooleanField,
     AutoField,
     DateTimeField,
+    IntegrityError
 )
 import sys
 from source_db import source_db
@@ -228,102 +229,198 @@ def run_migration():
                     for user in filtered_users:
                         print(f"ID: {user.id} | Name: {user.full_name} | Email: {user.email}")
 
-                    while True:
-                        # Step 3: Ask user to input the ID of the user to migrate
-                        user_id = input("\nEnter the ID of the user to migrate (or type 'skip' to skip this dealer): ").strip()
+                    print("\nOptions:")
+                    print("1. Enter the ID of the user to migrate.")
+                    print("2. Create a new user from dealer data.")
+                    user_choice = input("Enter your choice (1/2): ").strip()
 
-                        if user_id.lower() == "skip":
-                            break  # Skip this dealer, move on to the next one
+                    if user_choice == "1":
+                        while True:
+                            # Step 3: Ask user to input the ID of the user to migrate
+                            user_id = input("\nEnter the ID of the user to migrate (or type 'skip' to skip this dealer): ").strip()
 
-                        try:
-                            user_id = int(user_id)  # Ensure the input is an integer
+                            if user_id.lower() == "skip":
+                                break  # Skip this dealer, move on to the next one
 
-                            # Step 4: Fetch the selected user
-                            selected_user = User.get_by_id(user_id)
+                            try:
+                                user_id = int(user_id)  # Ensure the input is an integer
 
-                            # Show the selected user details for confirmation
-                            print(f"\nYou selected the following user:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
+                                # Step 4: Fetch the selected user
+                                selected_user = User.get_by_id(user_id)
 
-                            # Step 5: Check if the user is already migrated
-                            if str(selected_user.id) in mappings:
-                                print(f"Warning: User with ID {selected_user.id} is already migrated!")
-                                proceed = input("Do you want to proceed with the migration? (yes/no): ").strip().lower()
-                                if proceed != "yes":
-                                    continue  # Skip this user and ask for another ID
+                                # Show the selected user details for confirmation
+                                print(f"\nYou selected the following user:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
 
-                            # Step 6: Ask if they want to migrate this user
-                            action = input("Type 'migrate' to migrate this user, 'retry' to select a different user, or 'skip' to skip this user: ").strip().lower()
+                                # Step 5: Check if the user is already migrated
+                                if str(selected_user.id) in mappings:
+                                    print(f"Warning: User with ID {selected_user.id} is already migrated!")
+                                    proceed = input("Do you want to proceed with the migration? (yes/no): ").strip().lower()
+                                    if proceed != "yes":
+                                        continue  # Skip this user and ask for another ID
 
-                            if action == "migrate":
-                                # Perform migration for the selected user
-                                print(f"\nMigrating user {selected_user.full_name}...")
-                                current_time = datetime.now(pytz.utc)
+                                # Step 6: Ask if they want to migrate this user
+                                action = input("Type 'migrate' to migrate this user, 'retry' to select a different user, or 'skip' to skip this user: ").strip().lower()
 
-                                # Migrate user to destination user table
-                                # Call your migration logic here to create a user record in the destination table
-                                add_date = selected_user.add_date
-                                email, status = process_user_status_and_email(selected_user)
+                                if action == "migrate":
+                                    # Perform migration for the selected user
+                                    print(f"\nMigrating user {selected_user.full_name}...")
+                                    current_time = datetime.now(pytz.utc)
 
-                                new_user = DestinationUser.create(
-                                    name=selected_user.full_name,
-                                    email=email,
-                                    email_verified_at=current_time,
-                                    password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
-                                    username=selected_user.username,
-                                    company=selected_user.company,
-                                    status=status,
-                                    phone=selected_user.mobile,
-                                    mobile=selected_user.mobile,
-                                    timezone="UTC",
-                                    country=selected_user.country,
-                                    created_at=add_date,
-                                    updated_at=add_date,
-                                )
+                                    # Migrate user to destination user table
+                                    # Call your migration logic here to create a user record in the destination table
+                                    add_date = selected_user.add_date
+                                    email, status = process_user_status_and_email(selected_user)
+                                    try:
+                                        new_user = DestinationUser.create(
+                                            name=selected_user.full_name,
+                                            email=email,
+                                            email_verified_at=current_time,
+                                            password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
+                                            username=selected_user.username,
+                                            company=selected_user.company,
+                                            status=status,
+                                            phone=selected_user.mobile,
+                                            mobile=selected_user.mobile,
+                                            timezone="UTC",
+                                            country=selected_user.country,
+                                            created_at=add_date,
+                                            updated_at=add_date,
+                                        )
 
-                                print(f"User {selected_user.full_name} migrated successfully!")
+                                        print(f"User {selected_user.full_name} migrated successfully!")
 
-                                # Update parent_id for any sub-users
-                                if first_migrated_user is not None:
-                                    # Set the parent_id of sub-users to the first migrated user's ID
-                                    print(f"Updating parent_id for sub-user {new_user.name} (ID: {new_user.id})")
-                                    new_user.parent_id = first_migrated_user.id
-                                    new_user.save()
+                                        # Update parent_id for any sub-users
+                                        if first_migrated_user is not None:
+                                            # Set the parent_id of sub-users to the first migrated user's ID
+                                            print(f"Updating parent_id for sub-user {new_user.name} (ID: {new_user.id})")
+                                            new_user.parent_id = first_migrated_user.id
+                                            new_user.save()
 
-                                # Add this migrated user's ID to the list
-                                migrated_user_ids.append(new_user.id)
+                                        # Add this migrated user's ID to the list
+                                        migrated_user_ids.append(new_user.id)
 
-                                # Store the first migrated user for setting parent_id for sub-users
-                                if first_migrated_user is None:
-                                    first_migrated_user = new_user
+                                        # Store the first migrated user for setting parent_id for sub-users
+                                        if first_migrated_user is None:
+                                            first_migrated_user = new_user
 
-                                # Step 7: Update the mappings
-                                mappings[str(new_user.id)] = {
-                                    "old_user_id": selected_user.id,
-                                    "dealer_id": dealer.id
-                                }
-                                save_mappings(mappings)
+                                        # Step 7: Update the mappings
+                                        mappings[str(new_user.id)] = {
+                                            "old_user_id": selected_user.id,
+                                            "dealer_id": dealer.id
+                                        }
+                                        save_mappings(mappings)
 
-                                # Step 8: Ask if they want to migrate more sub-users for the same dealer
-                                migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
-                                if migrate_more != "yes":
+                                        # Step 8: Ask if they want to migrate more sub-users for the same dealer
+                                        migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
+                                        if migrate_more != "yes":
+                                            first_migrated_user = None
+                                            break  # Exit the loop to proceed with the next dealer
+                                    except IntegrityError as e:
+                                        print(f"Error: A user with the email '{email}' or username '{selected_user.username}' could not be created. Might exist already.")
+                                        retry = input("Do you want to retry with different data? (yes/retry) or skip (skip): ").strip().lower()
+                                        
+                                        if retry == "yes" or retry == "retry":
+                                            print("Please provide new data for the user.")
+                                            continue  # Continue to retry user creation logic
+                                        elif retry == "skip":
+                                            print(f"Skipping migration of user {selected_user.full_name}...")
+                                            continue  # Skip to the next user
+                                        else:
+                                            print("Invalid choice. Skipping to next dealer.")
+                                            continue
+                                elif action == "retry":
                                     first_migrated_user = None
-                                    break  # Exit the loop to proceed with the next dealer
+                                    continue  # Retry by asking for the user ID again
+                                elif action == "skip":
+                                    first_migrated_user = None
+                                    break  # Skip this user and move on to the next one
 
-                            elif action == "retry":
-                                first_migrated_user = None
-                                continue  # Retry by asking for the user ID again
-                            elif action == "skip":
-                                first_migrated_user = None
-                                break  # Skip this user and move on to the next one
+                            except ValueError:
+                                print("Invalid input! Please enter a valid user ID.")
+                            except User.DoesNotExist:
+                                print(f"No user found with ID {user_id}. Please try again.")
+                    elif user_choice == "2":
+                        # Create a new user from dealer data
+                        print(f"\nCreating a new user for company: {dealer.company}")
+                        new_user_data = {
+                            "name": dealer.company,  # Default name based on the dealer company
+                            "email": dealer.email,  # Default email
+                            "company": dealer.company,
+                            "mobile": dealer.phone,  # Default phone
+                            "country": "UAE",  # Default country based on dealer info,
+                            "username": generate_unique_username(dealer.email)
+                        }
 
-                        except ValueError:
-                            print("Invalid input! Please enter a valid user ID.")
-                        except User.DoesNotExist:
-                            print(f"No user found with ID {user_id}. Please try again.")
+                        # Ask for input or use default values
+                        print("\nDefault data for the new user:")
+                        for field, default_value in new_user_data.items():
+                            user_input = input(f"{field.capitalize()} (Default: {default_value}): ").strip()
+                            if user_input:
+                                new_user_data[field] = user_input
+
+                        # Create the new user record in the destination table
+                        current_time = datetime.now(pytz.utc)
+                        try:
+                            new_user = DestinationUser.create(
+                                name=new_user_data["name"],
+                                email=new_user_data["email"],
+                                email_verified_at=current_time,
+                                password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
+                                username=new_user_data["username"],
+                                company=new_user_data["company"],
+                                status="active",
+                                phone=new_user_data["mobile"],
+                                mobile=new_user_data["mobile"],
+                                timezone="UTC",
+                                country=new_user_data["country"],
+                                created_at=current_time,
+                                updated_at=current_time,
+                            )
+
+                            print(f"New user created successfully for {dealer.company}!")
+
+                            # Add the newly created user's ID to the migrated list
+                            migrated_user_ids.append(new_user.id)
+
+                            # Store the first migrated user for setting parent_id for sub-users
+                            if first_migrated_user is None:
+                                first_migrated_user = new_user
+
+                            # Step 9: Update the mappings
+                            mappings[str(new_user.id)] = {
+                                "old_user_id": None,  # Since this is a new user, old_user_id is None
+                                "dealer_id": dealer.id
+                            }
+                            save_mappings(mappings)
+
+                            # Step 10: Ask if they want to migrate more sub-users for the same dealer
+                            migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
+                            if migrate_more != "yes":
+                                first_migrated_user = None
+                                continue  # Move on to the next dealer
+
+                        except IntegrityError as e:
+                            # Handle duplicate entry error
+                            print(f"Error: A user with the email '{new_user_data['email']}' or username '{new_user_data['username']}' could not be created. Might exist already.")
+                            retry = input("Do you want to retry with different data? (yes/retry) or skip (skip): ").strip().lower()
+                            
+                            if retry == "yes" or retry == "retry":
+                                print("Please provide new data for the user.")
+                                continue  # Retry the user creation
+                            elif retry == "skip":
+                                print(f"Skipping creation of user for {dealer.company}...")
+                                continue  # Skip to the next step or dealer
+
+                            else:
+                                print("Invalid choice. Skipping to next dealer.")
+                                continue
+                    else:
+                        print("Invalid choice. Skipping this dealer.")
+                        continue
                 else:
                     print(f"No users found for dealer {dealer.company}.")
 
-                    # Step 9: Ask the user to create a new user if no users are found for this company
+                    # Step 11: Ask the user to create a new user if no users are found for this company
                     print(f"\nCreating a new user for company: {dealer.company}")
                     new_user_data = {
                         "name": dealer.company,  # Default name based on the dealer company
@@ -331,7 +428,7 @@ def run_migration():
                         "company": dealer.company,
                         "mobile": dealer.phone,  # Default phone
                         "country": "UAE",  # Default country based on dealer info,
-                        "username" : generate_unique_username(dealer.email)
+                        "username": generate_unique_username(dealer.email)
                     }
 
                     # Ask for input or use default values
@@ -343,44 +440,59 @@ def run_migration():
 
                     # Create the new user record in the destination table
                     current_time = datetime.now(pytz.utc)
-                    new_user = DestinationUser.create(
-                        name=new_user_data["name"],
-                        email=new_user_data["email"],
-                        email_verified_at=current_time,
-                        password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
-                        username=new_user_data["username"],
-                        company=new_user_data["company"],
-                        status="active",
-                        phone=new_user_data["mobile"],
-                        mobile=new_user_data["mobile"],
-                        timezone="UTC",
-                        country=new_user_data["country"],
-                        created_at=current_time,
-                        updated_at=current_time,
-                    )
+                    try:
+                        new_user = DestinationUser.create(
+                            name=new_user_data["name"],
+                            email=new_user_data["email"],
+                            email_verified_at=current_time,
+                            password="$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC",  # Pre-defined password hash
+                            username=new_user_data["username"],
+                            company=new_user_data["company"],
+                            status="active",
+                            phone=new_user_data["mobile"],
+                            mobile=new_user_data["mobile"],
+                            timezone="UTC",
+                            country=new_user_data["country"],
+                            created_at=current_time,
+                            updated_at=current_time,
+                        )
 
-                    print(f"New user created successfully for {dealer.company}!")
+                        print(f"New user created successfully for {dealer.company}!")
 
-                    # Add the newly created user's ID to the migrated list
-                    migrated_user_ids.append(new_user.id)
+                        # Add the newly created user's ID to the migrated list
+                        migrated_user_ids.append(new_user.id)
 
-                    # Store the first migrated user for setting parent_id for sub-users
-                    if first_migrated_user is None:
-                        first_migrated_user = new_user
+                        # Store the first migrated user for setting parent_id for sub-users
+                        if first_migrated_user is None:
+                            first_migrated_user = new_user
 
-                    # Step 10: Update the mappings
-                    mappings[str(new_user.id)] = {
-                        "old_user_id": None,  # Since this is a new user, old_user_id is None
-                        "dealer_id": dealer.id
-                    }
-                    save_mappings(mappings)
+                        # Step 12: Update the mappings
+                        mappings[str(new_user.id)] = {
+                            "old_user_id": None,  # Since this is a new user, old_user_id is None
+                            "dealer_id": dealer.id
+                        }
+                        save_mappings(mappings)
 
-                    # Step 11: Ask if they want to migrate more sub-users for the same dealer
-                    migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
-                    if migrate_more != "yes":
-                        first_migrated_user = None
-                        continue  # Move on to the next dealer
+                        # Step 13: Ask if they want to migrate more sub-users for the same dealer
+                        migrate_more = input("Do you want to migrate more users from the same company? (yes/skip): ").strip().lower()
+                        if migrate_more != "yes":
+                            first_migrated_user = None
+                            continue  # Move on to the next dealer
+                    except IntegrityError as e:
+                        # Handle duplicate entry error
+                        print(f"Error: A user with the email '{new_user_data['email']}' or username '{new_user_data['username']}'  could not be created. Might exist already.")
+                        retry = input("Do you want to retry with different data? (yes/retry) or skip (skip): ").strip().lower()
+                        
+                        if retry == "yes" or retry == "retry":
+                            print("Please provide new data for the user.")
+                            continue  # Retry the user creation
+                        elif retry == "skip":
+                            print(f"Skipping creation of user for {dealer.company}...")
+                            continue  # Skip to the next step or dealer
 
+                        else:
+                            print("Invalid choice. Skipping to next dealer.")
+                            continue
             elif response == "skip":
                 first_migrated_user = None
                 continue  # Skip this dealer and move on to the next one
