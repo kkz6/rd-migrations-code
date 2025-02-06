@@ -295,13 +295,13 @@ def run_migration():
                             questionary.select,
                             "Choose an option:",
                             choices=[
-                                "Enter the ID of the user to migrate",
+                                "Select a user to migrate",
                                 "Create a new user from dealer data",
                             ],
                         )
                     else:
-                        # Primary user exists; automatically choose to select an existing user.
-                        user_choice = "Enter the ID of the user to migrate"
+                        # Primary user exists; default to selecting an existing user.
+                        user_choice = "Select a user to migrate"
                 else:
                     print("\nNo unmigrated users found for this dealer.")
                     user_choice = safe_ask(
@@ -316,60 +316,66 @@ def run_migration():
                         break
 
                 # Handle the choice.
-                if user_choice == "Enter the ID of the user to migrate":
-                    # Loop to obtain a valid user ID.
-                    while True:
-                        user_input = safe_ask(
-                            questionary.text,
-                            "Enter the ID of the user to migrate (or type 'skip' to skip this dealer):"
+                if user_choice == "Select a user to migrate":
+                    # Use a select prompt to choose from the available users.
+                    choices = [
+                        questionary.Choice(
+                            title=f"{user.id} - {user.full_name} - {user.email}", value=user.id
                         )
-                        if user_input.lower() == "skip":
+                        for user in unmigrated_users
+                    ]
+                    choices.append(questionary.Choice(title="Skip this dealer", value="skip"))
+                    selected_value = safe_ask(
+                        questionary.select,
+                        "Select a user to migrate:",
+                        choices=choices,
+                    )
+                    if selected_value == "skip":
+                        skip_dealer = True
+                        break
+                    try:
+                        selected_user = User.get_by_id(selected_value)
+                        print(f"\nYou selected:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
+                        if str(selected_user.id) in mappings:
+                            proceed = safe_ask(
+                                questionary.confirm,
+                                "This user is already migrated. Proceed anyway?",
+                                default=False,
+                            )
+                            if not proceed:
+                                continue
+                        action = safe_ask(
+                            questionary.select,
+                            "Choose an action:",
+                            choices=["migrate", "retry", "skip"],
+                        )
+                        if action == "migrate":
+                            new_user = migrate_user(selected_user, dealer, first_migrated_user, mappings)
+                            if new_user:
+                                if first_migrated_user is None:
+                                    first_migrated_user = new_user
+                                migrated_user_ids.append(new_user.id)
+                                mappings[str(new_user.id)] = {"old_user_id": selected_user.id, "dealer_id": dealer.id}
+                                save_mappings(mappings)
+                                more = safe_ask(
+                                    questionary.confirm,
+                                    "Do you want to migrate more users from the same company?",
+                                    default=True,
+                                )
+                                if not more:
+                                    first_migrated_user = None
+                                    skip_dealer = True
+                            break
+                        elif action == "retry":
+                            continue
+                        elif action == "skip":
+                            first_migrated_user = None
                             skip_dealer = True
                             break
-                        try:
-                            user_id = int(user_input)
-                            selected_user = User.get_by_id(user_id)
-                            print(f"\nYou selected:\nID: {selected_user.id} | Name: {selected_user.full_name} | Email: {selected_user.email}")
-                            if str(selected_user.id) in mappings:
-                                proceed = safe_ask(
-                                    questionary.confirm,
-                                    "This user is already migrated. Proceed anyway?",
-                                    default=False,
-                                )
-                                if not proceed:
-                                    continue
-                            action = safe_ask(
-                                questionary.select,
-                                "Choose an action:",
-                                choices=["migrate", "retry", "skip"],
-                            )
-                            if action == "migrate":
-                                new_user = migrate_user(selected_user, dealer, first_migrated_user, mappings)
-                                if new_user:
-                                    if first_migrated_user is None:
-                                        first_migrated_user = new_user
-                                    migrated_user_ids.append(new_user.id)
-                                    mappings[str(new_user.id)] = {"old_user_id": selected_user.id, "dealer_id": dealer.id}
-                                    save_mappings(mappings)
-                                    more = safe_ask(
-                                        questionary.confirm,
-                                        "Do you want to migrate more users from the same company?",
-                                        default=True,
-                                    )
-                                    if not more:
-                                        first_migrated_user = None
-                                        skip_dealer = True
-                                break
-                            elif action == "retry":
-                                continue
-                            elif action == "skip":
-                                first_migrated_user = None
-                                skip_dealer = True
-                                break
-                        except ValueError:
-                            print("Invalid input! Please enter a valid numeric user ID.")
-                        except User.DoesNotExist:
-                            print("No user found with that ID. Please try again.")
+                    except ValueError:
+                        print("Invalid input! Please select a valid user.")
+                    except User.DoesNotExist:
+                        print("No user found with that selection. Please try again.")
                     if skip_dealer:
                         break
 
