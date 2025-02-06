@@ -286,7 +286,7 @@ def run_migration():
                                 if first_migrated_user is not None:
                                     # Set the parent_id of sub-users to the first migrated user's ID
                                     print(f"Updating parent_id for sub-user {new_user.name} (ID: {new_user.id})")
-                                    new_user.parent_id = new_user.id
+                                    new_user.parent_id = first_migrated_user.id
                                     new_user.save()
 
                                 # Add this migrated user's ID to the list
@@ -310,8 +310,10 @@ def run_migration():
                                     break  # Exit the loop to proceed with the next dealer
 
                             elif action == "retry":
+                                first_migrated_user = None
                                 continue  # Retry by asking for the user ID again
                             elif action == "skip":
+                                first_migrated_user = None
                                 break  # Skip this user and move on to the next one
 
                         except ValueError:
@@ -380,6 +382,7 @@ def run_migration():
                         continue  # Move on to the next dealer
 
             elif response == "skip":
+                first_migrated_user = None
                 continue  # Skip this dealer and move on to the next one
 
         print("Migration process complete.")
