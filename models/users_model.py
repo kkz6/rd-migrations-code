@@ -281,7 +281,7 @@ def run_migration() -> None:
         for dealer in dealers:
             dealer_response = safe_ask(
                 questionary.select,
-                f"Migrate {dealer.company}?",
+                f"Migrate {dealer.id} {dealer.company}?",
                 choices=["Yes", "Skip"],
             )
             if dealer_response != "Yes":
