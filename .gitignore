@@ -1,2 +1,4 @@
 models/__pycache__/*
 migrate
+user_mappings.json
+__pycache__
