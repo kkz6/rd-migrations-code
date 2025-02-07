@@ -363,14 +363,7 @@ def run_migration():
             count = len(unmigrated)
             print(f"\nUser {user.email} has {count} unmigrated device(s) from source dealer ID {source_dealer_id}.")
 
-            # Single confirmation prompt with a Skip option.
-            choice = questionary.select(
-                "Do you want to migrate these devices or skip?",
-                choices=["Migrate", "Skip"],
-            ).ask()
-            if choice != "Migrate":
-                continue
-
+            # Proceed with migration without an additional prompt.
             device_mappings = migrate_devices_for_user(user, source_dealer_id, device_mappings)
             print(f"Completed device migration for user {user.email}.\n")
 
