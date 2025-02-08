@@ -235,7 +235,7 @@ def migrate_single_customer(record):
 
 
 # Run Migration
-def run_customer_migration():
+def run_migration():
     """Main function to run the customer migration."""
     try:
         # Select migration mode
