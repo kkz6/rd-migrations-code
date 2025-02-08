@@ -16,7 +16,7 @@ from models.users_model import DestinationUser, User
 
 # Constants
 TECHNICIANS_MAPPING_FILE = "technicians_mapping.json"
-DEFAULT_USER_EMAIL = "linoj@resloute-dynamics.com"  # Replace with the known admin email
+DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with the known admin email
 
 # Source Model
 class TechnicianMaster(Model):
