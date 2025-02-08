@@ -2,4 +2,5 @@ models/__pycache__
 migrate
 user_mappings.json
 device_mappings.json
+technicians_mapping.json
 __pycache__

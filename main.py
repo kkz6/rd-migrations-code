@@ -9,7 +9,7 @@ import questionary
 # Import migration functions from your model modules.
 # Uncomment the ones you plan to use.
 from models.users_model import run_migration as run_users_migration
-# from models.vehicles_model import run_migration as run_vehicles_migration
+from models.technicians_model import run_migration as run_technician_migration
 from models.devices_model import run_migration as run_devices_migration
 # from models.certificates_model import run_migration as run_certificates_migration
 
@@ -20,7 +20,8 @@ def migrate_data():
         "Select which migration you want to run:",
         choices=[
             "Users",
-            "Devices"
+            "Devices",
+            "Technicians"
         ]
     ).ask()
 
@@ -28,8 +29,9 @@ def migrate_data():
         if migration_choice == "Users":
             run_users_migration()
         elif migration_choice == "Devices":
-            # Uncomment if devices migration is available.
             run_devices_migration()
+        elif migration_choice == "Technicians":
+            run_technician_migration()
         elif migration_choice == "Certificates":
             # Uncomment if certificates migration is available.
             # run_certificates_migration()
