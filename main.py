@@ -11,6 +11,7 @@ import questionary
 from models.users_model import run_migration as run_users_migration
 from models.technicians_model import run_migration as run_technician_migration
 from models.devices_model import run_migration as run_devices_migration
+from models.customers_model import run_migration as run_customer_migration
 # from models.certificates_model import run_migration as run_certificates_migration
 
 
@@ -21,7 +22,8 @@ def migrate_data():
         choices=[
             "Users",
             "Devices",
-            "Technicians"
+            "Technicians",
+            "Customers"
         ]
     ).ask()
 
@@ -32,13 +34,9 @@ def migrate_data():
             run_devices_migration()
         elif migration_choice == "Technicians":
             run_technician_migration()
-        elif migration_choice == "Certificates":
-            # Uncomment if certificates migration is available.
-            # run_certificates_migration()
-            print("Certificates migration is not enabled yet.")
+        elif migration_choice == "Customers":
+            run_customer_migration()
         elif migration_choice == "Vehicles":
-            # Uncomment if vehicles migration is available.
-            # run_vehicles_migration()
             print("Vehicles migration is not enabled yet.")
         elif migration_choice == "All":
             run_users_migration()

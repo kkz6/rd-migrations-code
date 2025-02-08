@@ -1,4 +1,5 @@
 import json
+import questionary
 from peewee import (
     Model,
     CharField,
@@ -12,11 +13,12 @@ from peewee import (
 )
 from source_db import source_db
 from dest_db import dest_db
-from models.users_model import DestinationUser, User
+from models.users_model import DestinationUser
 
 # Constants
 TECHNICIANS_MAPPING_FILE = "technicians_mapping.json"
 DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with the known admin email
+
 
 # Source Model
 class TechnicianMaster(Model):
@@ -119,8 +121,13 @@ def get_default_user():
 
 
 def get_new_user_id_from_mapping(old_user_id, user_mappings):
-    """Get the new user_id from the user_mappings.json file."""
-    return user_mappings.get(str(old_user_id), {}).get("new_user_id")
+    """
+    Get the new user_id from the user_mappings.json file based on the old user_id.
+    """
+    for new_user_id, mapping in user_mappings.items():
+        if mapping.get("old_user_id") == old_user_id:
+            return int(new_user_id)
+    return None
 
 
 def migrate_technicians(automated=False):
@@ -151,7 +158,10 @@ def migrate_technicians(automated=False):
             for record in TechnicianMaster.select():
                 try:
                     # Check if this technician is already migrated
-                    if str(record.id) in technicians_mappings:
+                    if any(
+                        mapping.get("old_technician_id") == record.id
+                        for mapping in technicians_mappings.values()
+                    ):
                         print(
                             f"Technician {record.technician_name} (ID: {record.id}) already migrated. Skipping..."
                         )
@@ -178,17 +188,19 @@ def migrate_technicians(automated=False):
                     )
 
                     # Save the mapping
-                    technicians_mappings[new_technician_id] = record.id
+                    technicians_mappings[new_technician_id] = {
+                        "old_technician_id": record.id,
+                        "user_id": new_user_id,
+                    }
                     save_technicians_mappings(technicians_mappings)
 
                     if automated:
                         migrated_count += 1
                     else:
-                        print(
-                            f"Technician Name: {record.technician_name}, Email: {record.technician_email}"
-                        )
-                        proceed = input("Do you want to migrate this record? (yes/no): ")
-                        if proceed.lower() == "yes":
+                        proceed = questionary.confirm(
+                            f"Do you want to migrate Technician: {record.technician_name}?"
+                        ).ask()
+                        if proceed:
                             migrated_count += 1
                         else:
                             skipped_count += 1
@@ -265,43 +277,42 @@ def migrate_single_technician_data(record, new_user_id, default_user):
 def run_migration():
     """Main function to run the migration."""
     try:
-        # Ask for migration mode
-        mode = input(
-            "How would you like to perform the migration?\n"
-            "1. Run Fully Automated\n"
-            "2. Migrate Technicians One by One\n"
-            "3. Migrate a Single Technician by ID\n"
-            "Enter your choice (1/2/3): "
-        )
+        # Ask for migration mode using questionary
+        mode = questionary.select(
+            "How would you like to perform the migration?",
+            choices=[
+                "Run Fully Automated",
+                "Migrate Technicians One by One",
+                "Migrate a Single Technician by ID",
+            ],
+        ).ask()
 
-        if mode == "1":
+        if mode == "Run Fully Automated":
             print("Running Fully Automated Migration...")
             clean_destination_table()
             migrate_technicians(automated=True)
 
-        elif mode == "2":
+        elif mode == "Migrate Technicians One by One":
             print("Running Migration One by One...")
             clean_destination_table()
             migrate_technicians(automated=False)
 
-        elif mode == "3":
-            technician_id = input("Enter the Technician ID to migrate: ")
+        elif mode == "Migrate a Single Technician by ID":
+            technician_id = questionary.text(
+                "Enter the Technician ID to migrate:"
+            ).ask()
             if not technician_id.isdigit():
                 print("Invalid Technician ID. Please enter a numeric value.")
                 return
-            clean_destination_table()
+            record = TechnicianMaster.get_by_id(int(technician_id))
             migrate_single_technician_data(
-                TechnicianMaster.get_by_id(int(technician_id)),
-                get_default_user().id,
-                load_user_mappings(),
+                record, get_new_user_id_from_mapping(record.user_id, load_user_mappings()), get_default_user()
             )
-
         else:
             print("Invalid choice. Exiting...")
-            return
 
     except Exception as e:
-        print(f"Error during migration process: {str(e)}")
+        print(f"Error during migration process: {e}")
     finally:
         # Ensure all database connections are closed
         if not source_db.is_closed():

@@ -331,14 +331,23 @@ def run_migration():
     """
     Main function that:
       1. Loads user and device mappings.
-      2. Iterates through each DestinationUser (dealer) that has a mapping in user_mappings.json.
-      3. For each such user, shows the count of unmigrated devices and asks once if they want to migrate or skip.
-      4. Performs the migration if chosen.
-      5. Handles keyboard interrupts gracefully.
+      2. Asks initial questions for how to run the migration.
+      3. Iterates through each DestinationUser (dealer) that has a mapping in user_mappings.json.
+      4. For each such user, migrates their devices based on the selected mode.
     """
     # Load mappings
     user_mappings = load_user_mappings()  # Keys: destination user IDs, values include "dealer_id"
-    device_mappings = load_device_mappings()  # Keys: new device ID, values: [ecu_number, dealer_id]
+    device_mappings = load_device_mappings()  # Keys: new device ID, values: {mapping details}
+
+    # Ask the user how they want to run the migration
+    mode = questionary.select(
+        "How would you like to perform the device migration?",
+        choices=[
+            "Run Fully Automated",
+            "Migrate Devices One by One",
+            "Migrate Devices for a Specific User by ID",
+        ],
+    ).ask()
 
     try:
         if source_db.is_closed():
@@ -346,26 +355,48 @@ def run_migration():
         if dest_db.is_closed():
             dest_db.connect()
 
-        for user in DestinationUser.select().order_by(DestinationUser.id):
+        if mode == "Run Fully Automated":
+            print("Running Fully Automated Migration...\n")
+            for user in DestinationUser.select().order_by(DestinationUser.id):
+                mapping = user_mappings.get(str(user.id))
+                if not mapping or "dealer_id" not in mapping:
+                    continue  # Skip users that are not mapped to a source dealer
+                source_dealer_id = mapping["dealer_id"]
+                device_mappings = migrate_devices_for_user(user, source_dealer_id, device_mappings)
+
+        elif mode == "Migrate Devices One by One":
+            print("Running Migration One by One...\n")
+            for user in DestinationUser.select().order_by(DestinationUser.id):
+                mapping = user_mappings.get(str(user.id))
+                if not mapping or "dealer_id" not in mapping:
+                    continue  # Skip users that are not mapped to a source dealer
+                source_dealer_id = mapping["dealer_id"]
+                user_choice = questionary.select(
+                    f"Migrate devices for user {user.email} (mapped source dealer ID: {source_dealer_id})?",
+                    choices=["Migrate", "Skip"],
+                ).ask()
+                if user_choice == "Migrate":
+                    device_mappings = migrate_devices_for_user(user, source_dealer_id, device_mappings)
+
+        elif mode == "Migrate Devices for a Specific User by ID":
+            user_id = questionary.text("Enter the Destination User ID:").ask()
+            if not user_id.isdigit():
+                print("Invalid User ID. Please enter a numeric value.")
+                return
+            user = DestinationUser.get_by_id(int(user_id))
             mapping = user_mappings.get(str(user.id))
             if not mapping or "dealer_id" not in mapping:
-                continue  # Skip users that are not mapped to a source dealer
-
+                print(f"No mapping found for user {user.email}.")
+                return
             source_dealer_id = mapping["dealer_id"]
-            prompt = questionary.select(
-                f"\nMigrate devices for user {user.email} (mapped source dealer ID: {source_dealer_id})?",
-                choices=["Migrate", "Skip"],
-            ).ask()
-            if prompt != "Migrate":
-                continue
-
-            unmigrated = list_unmigrated_devices(source_dealer_id, device_mappings)
-            count = len(unmigrated)
-            print(f"\nUser {user.email} has {count} unmigrated device(s) from source dealer ID {source_dealer_id}.")
-
-            # Proceed with migration without an additional prompt.
+            print(f"Migrating devices for user {user.email} (mapped source dealer ID: {source_dealer_id}).\n")
             device_mappings = migrate_devices_for_user(user, source_dealer_id, device_mappings)
-            print(f"Completed device migration for user {user.email}.\n")
+
+        else:
+            print("Invalid choice. Exiting...")
+            return
+
+        print("\nMigration process completed successfully.")
 
     except KeyboardInterrupt:
         print("\nMigration interrupted by user. Exiting gracefully...")
@@ -376,6 +407,7 @@ def run_migration():
             source_db.close()
         if not dest_db.is_closed():
             dest_db.close()
+
 
 
 if __name__ == "__main__":
