@@ -197,6 +197,8 @@ def list_unmigrated_devices(dealer_source_id: int, device_mappings: dict) -> lis
 
 def generate_excel_report(migrated_data, unmigrated_data):
     """Generate an Excel file with migrated and unmigrated device data."""
+    print(f"Generating Excel Report: {len(migrated_data)} migrated, {len(unmigrated_data)} unmigrated")
+
     workbook = Workbook()
     migrated_sheet = workbook.active
     migrated_sheet.title = "Migrated Devices"
@@ -216,7 +218,9 @@ def generate_excel_report(migrated_data, unmigrated_data):
         ]
     )
 
+    # Debug: Print each record being added to the sheet
     for record in migrated_data:
+        print(f"Writing record to Migrated Devices sheet: {record}")
         migrated_sheet.append(
             [
                 record["device_id"],
@@ -235,7 +239,9 @@ def generate_excel_report(migrated_data, unmigrated_data):
         ["ECU Number", "Dealer ID", "Reason"]
     )
 
+    # Debug: Print each record being added to the sheet
     for record in unmigrated_data:
+        print(f"Writing record to Unmigrated Devices sheet: {record}")
         unmigrated_sheet.append(
             [
                 record["ecu_number"],
@@ -244,8 +250,12 @@ def generate_excel_report(migrated_data, unmigrated_data):
             ]
         )
 
-    workbook.save(EXCEL_FILE_NAME)
-    print(f"\nMigration report saved as {EXCEL_FILE_NAME}")
+    # Save the workbook
+    try:
+        workbook.save(EXCEL_FILE_NAME)
+        print(f"Migration report successfully saved as {EXCEL_FILE_NAME}")
+    except Exception as e:
+        print(f"Error saving Excel file: {e}")
 
 
 def get_or_create_device_type(name: str, user: DestinationUser):
@@ -322,7 +332,7 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, default_user: DestinationUser,
 def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings):
     """
     Migrate devices in batches to handle large datasets, using the default user's ID for `user_id`.
-    Implements batch inserts for improved performance and captures unmigrated devices.
+    Implements batch inserts for improved performance and captures migrated and unmigrated devices accurately.
     """
     total_devices = len(unmigrated_devices)
     migrated_data = []
@@ -392,6 +402,31 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
         if batch_device_records:
             try:
                 Device.insert_many(batch_device_records).execute()  # Batch insert
+                print(f"Inserted {len(batch_device_records)} records into the Device table.")
+
+                # Fetch the inserted devices to include in migrated data
+                for record in batch_device_records:
+                    try:
+                        device = Device.get(Device.ecu_number == record["ecu_number"])
+                        migrated_data.append(
+                            {
+                                "device_id": device.id,
+                                "ecu_number": device.ecu_number,
+                                "device_type_name": DeviceType.get_by_id(device.device_type_id).name,
+                                "device_model_name": DeviceModel.get_by_id(device.device_model_id).name,
+                                "device_variant_name": (
+                                    DeviceVariant.get_by_id(device.device_variant_id).name
+                                    if device.device_variant_id else ""
+                                ),
+                                "dealer_id": dealer_id,
+                                "user_id": default_user.id,
+                                "created_at": device.created_at,
+                            }
+                        )
+                    except DoesNotExist:
+                        print(f"Device with ECU {record['ecu_number']} not found after insertion.")
+                    except Exception as e:
+                        print(f"Unexpected error while fetching device: {e}")
 
                 # Save the mappings
                 for mapping in batch_device_mappings:
