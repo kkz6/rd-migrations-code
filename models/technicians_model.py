@@ -1,5 +1,6 @@
 import json
 import questionary
+from openpyxl import Workbook
 from peewee import (
     Model,
     CharField,
@@ -18,6 +19,7 @@ from models.users_model import DestinationUser
 # Constants
 TECHNICIANS_MAPPING_FILE = "technicians_mapping.json"
 DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with the known admin email
+EXCEL_FILE_NAME = "technician_migration_report.xlsx"
 
 
 # Source Model
@@ -130,107 +132,43 @@ def get_new_user_id_from_mapping(old_user_id, user_mappings):
     return None
 
 
-def migrate_technicians(automated=False):
-    """
-    Migrate all technicians from the source database to the destination database.
-    """
-    ignored_rows = []
-    total_records = TechnicianMaster.select().count()
-    migrated_count = 0
-    skipped_count = 0
+def generate_excel_report(migrated_data, unmigrated_data):
+    """Generate an Excel file with migrated and unmigrated technician data."""
+    workbook = Workbook()
+    migrated_sheet = workbook.active
+    migrated_sheet.title = "Migrated Technicians"
+    unmigrated_sheet = workbook.create_sheet(title="Unmigrated Technicians")
 
-    # Establish connections if not already connected
-    if source_db.is_closed():
-        source_db.connect()
-    if dest_db.is_closed():
-        dest_db.connect()
+    # Headers for Migrated Technicians
+    migrated_sheet.append(["Technician ID", "Name", "Email", "Phone", "User ID", "Created At", "Updated At"])
+    for record in migrated_data:
+        migrated_sheet.append(
+            [
+                record["id"],
+                record["name"],
+                record["email"],
+                record["phone"],
+                record["user_id"],
+                record["created_at"],
+                record["updated_at"],
+            ]
+        )
 
-    # Get default "created_by" user
-    default_user = get_default_user()
-    print(f"Default 'created_by' user: {default_user.email} (ID: {default_user.id})")
+    # Headers for Unmigrated Technicians
+    unmigrated_sheet.append(["Technician ID", "Name", "Email", "Phone", "Reason"])
+    for record in unmigrated_data:
+        unmigrated_sheet.append(
+            [
+                record["id"],
+                record["name"],
+                record["email"],
+                record["phone"],
+                record["reason"],
+            ]
+        )
 
-    # Load user mappings and technicians mappings
-    user_mappings = load_user_mappings()
-    technicians_mappings = load_technicians_mappings()
-
-    try:
-        with dest_db.atomic():  # Begin transaction
-            for record in TechnicianMaster.select():
-                try:
-                    # Check if this technician is already migrated
-                    if any(
-                        mapping.get("old_technician_id") == record.id
-                        for mapping in technicians_mappings.values()
-                    ):
-                        print(
-                            f"Technician {record.technician_name} (ID: {record.id}) already migrated. Skipping..."
-                        )
-                        skipped_count += 1
-                        continue
-
-                    # Get new user_id from the mapping table
-                    new_user_id = get_new_user_id_from_mapping(
-                        record.user_id, user_mappings
-                    )
-                    if not new_user_id:
-                        print(
-                            f"Skipping Technician {record.technician_name} (ID: {record.id}) - No mapped user found."
-                        )
-                        ignored_rows.append(
-                            (record, "No mapped user found for old user_id.")
-                        )
-                        skipped_count += 1
-                        continue
-
-                    # Insert or update the technician record
-                    new_technician_id = migrate_single_technician_data(
-                        record, new_user_id, default_user
-                    )
-
-                    # Save the mapping
-                    technicians_mappings[new_technician_id] = {
-                        "old_technician_id": record.id,
-                        "user_id": new_user_id,
-                    }
-                    save_technicians_mappings(technicians_mappings)
-
-                    if automated:
-                        migrated_count += 1
-                    else:
-                        proceed = questionary.confirm(
-                            f"Do you want to migrate Technician: {record.technician_name}?"
-                        ).ask()
-                        if proceed:
-                            migrated_count += 1
-                        else:
-                            skipped_count += 1
-
-                except Exception as e:
-                    print(
-                        f"Error migrating Technician {record.technician_name} ({record.technician_email}): {e}"
-                    )
-                    ignored_rows.append((record, str(e)))
-                    skipped_count += 1
-
-    finally:
-        # Close connections
-        if not source_db.is_closed():
-            source_db.close()
-        if not dest_db.is_closed():
-            dest_db.close()
-
-    # Summary of migration results
-    print(f"\nMigration Summary:")
-    print(f"Total records: {total_records}")
-    print(f"Successfully migrated: {migrated_count}")
-    print(f"Skipped/Failed: {skipped_count}")
-
-    if ignored_rows:
-        print("\nDetailed error log:")
-        for technician, reason in ignored_rows:
-            print(
-                f"- {technician.technician_name} ({technician.technician_email}): {reason}"
-            )
+    workbook.save(EXCEL_FILE_NAME)
+    print(f"\nMigration report saved as {EXCEL_FILE_NAME}")
 
 
 def migrate_single_technician_data(record, new_user_id, default_user):
@@ -274,12 +212,157 @@ def migrate_single_technician_data(record, new_user_id, default_user):
             raise
 
 
+def migrate_technicians(automated=False):
+    """
+    Migrate all technicians from the source database to the destination database.
+    Handles automated and one-by-one migration modes.
+    """
+    ignored_rows = []
+    migrated_data = []
+    unmigrated_data = []
+    total_records = TechnicianMaster.select().count()
+    migrated_count = 0
+    skipped_count = 0
+
+    # Establish connections if not already connected
+    if source_db.is_closed():
+        source_db.connect()
+    if dest_db.is_closed():
+        dest_db.connect()
+
+    # Get default "created_by" user
+    default_user = get_default_user()
+    print(f"Default 'created_by' user: {default_user.email} (ID: {default_user.id})")
+
+    # Load user mappings and technicians mappings
+    user_mappings = load_user_mappings()
+    technicians_mappings = load_technicians_mappings()
+
+    for record in TechnicianMaster.select():
+        try:
+            # Check if this technician is already migrated
+            if any(
+                mapping.get("old_technician_id") == record.id
+                for mapping in technicians_mappings.values()
+            ):
+                print(
+                    f"Technician {record.technician_name} (ID: {record.id}) already migrated. Skipping..."
+                )
+                skipped_count += 1
+                continue
+
+            # Get new user_id from the mapping table
+            new_user_id = get_new_user_id_from_mapping(record.user_id, user_mappings)
+            if not new_user_id:
+                print(
+                    f"Skipping Technician {record.technician_name} (ID: {record.id}) - No mapped user found."
+                )
+                unmigrated_data.append(
+                    {
+                        "id": record.id,
+                        "name": record.technician_name,
+                        "email": record.technician_email,
+                        "phone": record.technician_phone,
+                        "reason": "No mapped user found",
+                    }
+                )
+                skipped_count += 1
+                continue
+
+            # Automated mode: Perform migration directly
+            if automated:
+                new_technician_id = migrate_single_technician_data(
+                    record, new_user_id, default_user
+                )
+                technicians_mappings[new_technician_id] = {
+                    "old_technician_id": record.id,
+                    "user_id": new_user_id,
+                }
+                save_technicians_mappings(technicians_mappings)
+
+                migrated_data.append(
+                    {
+                        "id": new_technician_id,
+                        "name": record.technician_name,
+                        "email": record.technician_email,
+                        "phone": record.technician_phone,
+                        "user_id": new_user_id,
+                        "created_at": record.add_date,
+                        "updated_at": record.add_date,
+                    }
+                )
+                migrated_count += 1
+            else:
+                # One-by-one mode: Ask for confirmation
+                proceed = questionary.confirm(
+                    f"Do you want to migrate Technician: {record.technician_name}?"
+                ).ask()
+                if proceed:
+                    new_technician_id = migrate_single_technician_data(
+                        record, new_user_id, default_user
+                    )
+                    technicians_mappings[new_technician_id] = {
+                        "old_technician_id": record.id,
+                        "user_id": new_user_id,
+                    }
+                    save_technicians_mappings(technicians_mappings)
+
+                    migrated_data.append(
+                        {
+                            "id": new_technician_id,
+                            "name": record.technician_name,
+                            "email": record.technician_email,
+                            "phone": record.technician_phone,
+                            "user_id": new_user_id,
+                            "created_at": record.add_date,
+                            "updated_at": record.add_date,
+                        }
+                    )
+                    migrated_count += 1
+                else:
+                    skipped_count += 1
+        except KeyboardInterrupt:
+            # Stop entire migration on keyboard interrupt
+            print("\nMigration interrupted. Exiting gracefully...")
+            raise
+        except Exception as e:
+            print(
+                f"Error migrating Technician {record.technician_name} ({record.technician_email}): {e}"
+            )
+            unmigrated_data.append(
+                {
+                    "id": record.id,
+                    "name": record.technician_name,
+                    "email": record.technician_email,
+                    "phone": record.technician_phone,
+                    "reason": str(e),
+                }
+            )
+            skipped_count += 1
+
+    # Generate Excel report in automated mode
+    if automated:
+        generate_excel_report(migrated_data, unmigrated_data)
+
+    # Summary of migration results
+    print(f"\nMigration Summary:")
+    print(f"Total records: {total_records}")
+    print(f"Successfully migrated: {migrated_count}")
+    print(f"Skipped/Failed: {skipped_count}")
+
+
 def run_migration():
-    """Main function to run the migration."""
+    """
+    Main function to run the technician migration.
+    Allows users to select:
+      1. Fully automated migration.
+      2. Technician-by-technician migration.
+      3. Single technician migration by ID.
+    """
     try:
         # Ask for migration mode using questionary
         mode = questionary.select(
-            "How would you like to perform the migration?",
+            "How would you like to perform the technician migration?",
             choices=[
                 "Run Fully Automated",
                 "Migrate Technicians One by One",
@@ -304,13 +387,28 @@ def run_migration():
             if not technician_id.isdigit():
                 print("Invalid Technician ID. Please enter a numeric value.")
                 return
+
+            # Fetch technician from the source database and migrate it
             record = TechnicianMaster.get_by_id(int(technician_id))
-            migrate_single_technician_data(
-                record, get_new_user_id_from_mapping(record.user_id, load_user_mappings()), get_default_user()
-            )
+            user_mappings = load_user_mappings()
+            default_user = get_default_user()
+            new_user_id = get_new_user_id_from_mapping(record.user_id, user_mappings)
+
+            if not new_user_id:
+                print(
+                    f"No mapping found for Technician: {record.technician_name} (ID: {record.id})."
+                )
+                return
+
+            migrate_single_technician_data(record, new_user_id, default_user)
+            print(f"Successfully migrated Technician: {record.technician_name}")
+
         else:
             print("Invalid choice. Exiting...")
+            return
 
+    except KeyboardInterrupt:
+        print("\nMigration interrupted by user. Exiting gracefully...")
     except Exception as e:
         print(f"Error during migration process: {e}")
     finally:
