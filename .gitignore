@@ -1,10 +1,14 @@
 models/__pycache__
 migrate
-user_mappings.json
-device_mappings.json
-technicians_mapping.json
 __pycache__
 
 
 #Excel sheets migrated
 technician_migration_report.xlsx
+customer_migration_report.xlsx
+
+#mappings
+user_mappings.json
+device_mappings.json
+technicians_mapping.json
+customer_mappings.json

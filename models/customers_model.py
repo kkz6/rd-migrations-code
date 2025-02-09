@@ -1,5 +1,6 @@
 import json
 import questionary
+from openpyxl import Workbook
 from peewee import (
     Model,
     CharField,
@@ -8,6 +9,7 @@ from peewee import (
     TextField,
     IntegerField,
     CompositeKey,
+    DateTimeField,
     IntegrityError,
 )
 from source_db import source_db
@@ -18,6 +20,7 @@ from models.users_model import DestinationUser
 CUSTOMER_MAPPING_FILE = "customer_mappings.json"
 USER_MAPPING_FILE = "user_mappings.json"
 DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with admin email
+EXCEL_FILE_NAME = "customer_migration_report.xlsx"
 
 
 # Source Model
@@ -27,7 +30,7 @@ class CustomerMaster(Model):
     email = TextField()
     o_address = TextField()
     o_contactphone = TextField()
-    add_date = TimestampField()
+    add_date = DateTimeField()  # Changed to DateTimeField
     user_id = IntegerField()
     company_local = TextField()
 
@@ -41,9 +44,12 @@ class Customer(Model):
     id = BigIntegerField(primary_key=True)
     email = CharField(max_length=255)
     name = CharField(max_length=255)
+    name_local = CharField(max_length=255, null=True)  # Added name_local
     address = TextField()
     contact_number = CharField(max_length=255)
     user_id = BigIntegerField()
+    created_at = DateTimeField()  # Added created_at
+    updated_at = DateTimeField()  # Added updated_at
 
     class Meta:
         database = dest_db
@@ -105,10 +111,86 @@ def get_default_user():
         raise Exception(f"Default user with email {DEFAULT_USER_EMAIL} not found.") from e
 
 
-# Migration Functions
+def generate_excel_report(migrated_data, unmigrated_data):
+    """Generate an Excel file with migrated and unmigrated customer data."""
+    workbook = Workbook()
+    migrated_sheet = workbook.active
+    migrated_sheet.title = "Migrated Customers"
+    unmigrated_sheet = workbook.create_sheet(title="Unmigrated Customers")
+
+    # Headers for Migrated Customers
+    migrated_sheet.append(
+        [
+            "Customer ID",
+            "Customer Name",
+            "Customer Name Local",
+            "Email",
+            "Address",
+            "Contact Number",
+            "New Dealer ID",
+            "Old User ID",
+        ]
+    )
+
+    for record in migrated_data:
+        migrated_sheet.append(
+            [
+                record["customer_id"],
+                record["customer_name"],
+                record["customer_name_local"],
+                record["email"],
+                record["address"],
+                record["contact_number"],
+                record["new_dealer_id"],
+                record["old_user_id"],
+            ]
+        )
+        # Sub-row showing old user and new user details
+        migrated_sheet.append(
+            [
+                "",
+                "Old User",
+                record["old_user_email"],
+                "",
+                "",
+                "",
+                "New User",
+                record["new_user_email"],
+            ]
+        )
+
+    # Headers for Unmigrated Customers
+    unmigrated_sheet.append(
+        [
+            "Customer ID",
+            "Customer Name",
+            "Email",
+            "Address",
+            "Contact Number",
+            "Reason",
+        ]
+    )
+
+    for record in unmigrated_data:
+        unmigrated_sheet.append(
+            [
+                record["id"],
+                record["name"],
+                record["email"],
+                record["address"],
+                record["contact_number"],
+                record["reason"],
+            ]
+        )
+
+    workbook.save(EXCEL_FILE_NAME)
+    print(f"\nMigration report saved as {EXCEL_FILE_NAME}")
+
+
 def migrate_customers(automated=False):
     """Migrate all customers and populate the customer_dealer pivot table."""
-    ignored_rows = []
+    migrated_data = []
+    unmigrated_data = []
     total_records = CustomerMaster.select().count()
     migrated_count = 0
     skipped_count = 0
@@ -124,63 +206,102 @@ def migrate_customers(automated=False):
     customer_mappings = load_customer_mappings()
 
     try:
-        with dest_db.atomic():  # Begin transaction
-            for record in CustomerMaster.select():
-                try:
-                    # Check if the customer is already migrated
-                    if str(record.id) in customer_mappings:
-                        print(
-                            f"Customer {record.company} (ID: {record.id}) already migrated. Skipping..."
-                        )
-                        skipped_count += 1
-                        continue
-
-                    # Get new dealer_id from the user mappings
-                    new_dealer_id = get_new_user_id_from_mapping(
-                        record.user_id, user_mappings
+        for record in CustomerMaster.select():
+            try:
+                # Check if the customer is already migrated
+                if str(record.id) in customer_mappings:
+                    print(
+                        f"Customer {record.company} (ID: {record.id}) already migrated. Skipping..."
                     )
-                    if not new_dealer_id:
-                        print(
-                            f"Skipping Customer {record.company} (ID: {record.id}) - No mapped dealer found."
-                        )
-                        ignored_rows.append(
-                            (record, "No mapped dealer found for old user_id.")
-                        )
-                        skipped_count += 1
-                        continue
+                    skipped_count += 1
+                    continue
 
-                    # Insert or update the customer record
-                    new_customer_id = migrate_single_customer(record)
-
-                    # Populate the customer_dealer table
-                    CustomerDealer.create(
-                        customer_id=new_customer_id, dealer_id=new_dealer_id
+                # Get new dealer_id from the user mappings
+                new_dealer_id = get_new_user_id_from_mapping(
+                    record.user_id, user_mappings
+                )
+                if not new_dealer_id:
+                    print(
+                        f"Skipping Customer {record.company} (ID: {record.id}) - No mapped dealer found."
                     )
+                    unmigrated_data.append(
+                        {
+                            "id": record.id,
+                            "name": record.company,
+                            "email": record.email,
+                            "address": record.o_address,
+                            "contact_number": record.o_contactphone,
+                            "reason": "No mapped dealer found",
+                        }
+                    )
+                    skipped_count += 1
+                    continue
 
-                    # Save the mapping
-                    customer_mappings[new_customer_id] = record.id
-                    save_customer_mappings(customer_mappings)
+                # Insert or update the customer record
+                new_customer_id = migrate_single_customer(record)
 
-                    # Interactive mode or automated migration
-                    if automated:
+                # Populate the customer_dealer table
+                CustomerDealer.create(
+                    customer_id=new_customer_id, dealer_id=new_dealer_id
+                )
+
+                # Save the mapping
+                customer_mappings[new_customer_id] = record.id
+                save_customer_mappings(customer_mappings)
+
+                # Add to migrated data
+                migrated_data.append(
+                    {
+                        "customer_id": new_customer_id,
+                        "customer_name": record.company,
+                        "customer_name_local": record.company_local,
+                        "email": record.email,
+                        "address": record.o_address,
+                        "contact_number": record.o_contactphone,
+                        "new_dealer_id": new_dealer_id,
+                        "old_user_id": record.user_id,
+                        "old_user_email": "Old_User_Email",  # Replace with actual old user email if available
+                        "new_user_email": DestinationUser.get_by_id(new_dealer_id).email,
+                        "created_at": record.add_date,
+                        "updated_at": record.add_date,
+                    }
+                )
+
+                if automated:
+                    migrated_count += 1
+                else:
+                    proceed = questionary.confirm(
+                        f"Do you want to migrate Customer: {record.company} (Email: {record.email})?"
+                    ).ask()
+                    if proceed:
                         migrated_count += 1
                     else:
-                        proceed = questionary.confirm(
-                            f"Do you want to migrate Customer: {record.company} (Email: {record.email})?"
-                        ).ask()
-                        if proceed:
-                            migrated_count += 1
-                        else:
-                            skipped_count += 1
+                        skipped_count += 1
 
-                except Exception as e:
-                    print(
-                        f"Error migrating Customer {record.company} ({record.email}): {e}"
-                    )
-                    ignored_rows.append((record, str(e)))
-                    skipped_count += 1
+            except KeyboardInterrupt:
+                print("\nMigration interrupted. Exiting gracefully...")
+                raise
+            except Exception as e:
+                print(
+                    f"Error migrating Customer {record.company} ({record.email}): {e}"
+                )
+                unmigrated_data.append(
+                    {
+                        "id": record.id,
+                        "name": record.company,
+                        "email": record.email,
+                        "address": record.o_address,
+                        "contact_number": record.o_contactphone,
+                        "reason": str(e),
+                    }
+                )
+                skipped_count += 1
 
     finally:
+        # Generate Excel report in automated mode
+        if automated:
+            generate_excel_report(migrated_data, unmigrated_data)
+
         # Close connections
         if not source_db.is_closed():
             source_db.close()
@@ -193,11 +314,6 @@ def migrate_customers(automated=False):
     print(f"Successfully migrated: {migrated_count}")
     print(f"Skipped/Failed: {skipped_count}")
 
-    if ignored_rows:
-        print("\nDetailed error log:")
-        for customer, reason in ignored_rows:
-            print(f"- {customer.company} ({customer.email}): {reason}")
-
 
 def migrate_single_customer(record):
     """
@@ -209,9 +325,12 @@ def migrate_single_customer(record):
             id=record.id,
             email=record.email,
             name=record.company,
+            name_local=record.company_local,
             address=record.o_address,
             contact_number=record.o_contactphone,
             user_id=record.user_id,
+            created_at=record.add_date,
+            updated_at=record.add_date,
         )
         print(f"Migrated Customer: {record.company} (New ID: {customer.id})")
         return customer.id
@@ -223,8 +342,11 @@ def migrate_single_customer(record):
             Customer.update(
                 {
                     "name": record.company,
+                    "name_local": record.company_local,
                     "address": record.o_address,
                     "contact_number": record.o_contactphone,
+                    "created_at": record.add_date,
+                    "updated_at": record.add_date,
                 }
             ).where(Customer.email == record.email).execute()
             updated_customer = Customer.get(Customer.email == record.email)
@@ -234,7 +356,6 @@ def migrate_single_customer(record):
             raise
 
 
-# Run Migration
 def run_migration():
     """Main function to run the customer migration."""
     try:
@@ -269,6 +390,8 @@ def run_migration():
             print("Invalid choice. Exiting...")
             return
 
+    except KeyboardInterrupt:
+        print("\nMigration interrupted. Exiting gracefully...")
     except Exception as e:
         print(f"Error during customer migration: {e}")
     finally:
