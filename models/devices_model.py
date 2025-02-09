@@ -322,7 +322,7 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, default_user: DestinationUser,
 def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings):
     """
     Migrate devices in batches to handle large datasets, using the default user's ID for `user_id`.
-    Implements batch inserts for improved performance.
+    Implements batch inserts for improved performance and captures unmigrated devices.
     """
     total_devices = len(unmigrated_devices)
     migrated_data = []
@@ -337,9 +337,14 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
 
         for ecu_record in batch:
             try:
+                # Track if the device is successfully mapped
+                device_mapped = False
+
                 # Map the ECU record to device data
                 for prefix, mapping in ecm_mapping.items():
                     if ecu_record.ecu.startswith(prefix):
+                        device_mapped = True  # Device has a mapping
+
                         # Get or create related entities
                         device_type = get_or_create_device_type(mapping["device_type"], default_user)
                         device_model = get_or_create_device_model(mapping["device_model"], device_type, mapping["approval_code"], default_user)
@@ -367,33 +372,26 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
                         })
                         break  # Exit prefix-matching loop if matched
 
+                if not device_mapped:
+                    # Device has no mapping, add to unmigrated_data
+                    unmigrated_data.append({
+                        "ecu_number": ecu_record.ecu,
+                        "dealer_id": ecu_record.dealer_id,
+                        "reason": "No matching prefix in ECM mapping",
+                    })
+
             except Exception as e:
-                # Handle unmigrated devices
-                unmigrated_data.append({"ecu_number": ecu_record.ecu, "dealer_id": ecu_record.dealer_id, "reason": str(e)})
+                # Handle any errors during device mapping or processing
+                unmigrated_data.append({
+                    "ecu_number": ecu_record.ecu,
+                    "dealer_id": ecu_record.dealer_id,
+                    "reason": str(e),
+                })
 
         # Perform batch insert for the current batch
         if batch_device_records:
             try:
                 Device.insert_many(batch_device_records).execute()  # Batch insert
-
-                # Fetch the inserted devices to include in migrated data
-                for record in batch_device_records:
-                    device = Device.get(Device.ecu_number == record["ecu_number"])  # Fetch inserted record
-                    migrated_data.append(
-                        {
-                            "device_id": device.id,
-                            "ecu_number": device.ecu_number,
-                            "device_type_name": DeviceType.get_by_id(device.device_type_id).name,
-                            "device_model_name": DeviceModel.get_by_id(device.device_model_id).name,
-                            "device_variant_name": (
-                                DeviceVariant.get_by_id(device.device_variant_id).name
-                                if device.device_variant_id else ""
-                            ),
-                            "dealer_id": dealer_id,
-                            "user_id": default_user.id,
-                            "created_at": device.created_at,
-                        }
-                    )
 
                 # Save the mappings
                 for mapping in batch_device_mappings:
@@ -403,6 +401,14 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
                 batch_device_mappings.clear()  # Clear after mapping save
             except Exception as e:
                 print(f"Error during batch insert: {e}")
+                # Add batch devices to unmigrated_data on failure
+                for record in batch_device_records:
+                    unmigrated_data.append({
+                        "ecu_number": record["ecu_number"],
+                        "dealer_id": record["dealer_id"],
+                        "reason": "Batch insert failed: " + str(e),
+                    })
+                batch_device_records.clear()
 
     return migrated_data, unmigrated_data
 
