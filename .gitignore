@@ -6,6 +6,7 @@ __pycache__
 #Excel sheets migrated
 technician_migration_report.xlsx
 customer_migration_report.xlsx
+device_migration_report.xlsx
 
 #mappings
 user_mappings.json
