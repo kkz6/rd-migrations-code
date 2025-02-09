@@ -322,10 +322,14 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, default_user: DestinationUser,
 def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings):
     """
     Migrate devices in batches to handle large datasets, using the default user's ID for `user_id`.
+    Implements batch inserts for improved performance.
     """
     total_devices = len(unmigrated_devices)
     migrated_data = []
     unmigrated_data = []
+
+    batch_device_records = []  # Collect records for batch insert
+    batch_device_mappings = []  # Collect mappings for batch saving
 
     for batch_start in range(0, total_devices, BATCH_SIZE):
         batch = unmigrated_devices[batch_start:batch_start + BATCH_SIZE]
@@ -333,40 +337,72 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
 
         for ecu_record in batch:
             try:
-                device = get_device_data_by_ecu(ecu_record, default_user, dealer_id)
-                if device:
-                    # Fetch related data for DeviceType, DeviceModel, and DeviceVariant
-                    device_type = DeviceType.get_by_id(device.device_type_id)
-                    device_model = DeviceModel.get_by_id(device.device_model_id)
-                    device_variant = (
-                        DeviceVariant.get_by_id(device.device_variant_id)
-                        if device.device_variant_id
-                        else None
-                    )
+                # Map the ECU record to device data
+                for prefix, mapping in ecm_mapping.items():
+                    if ecu_record.ecu.startswith(prefix):
+                        # Get or create related entities
+                        device_type = get_or_create_device_type(mapping["device_type"], default_user)
+                        device_model = get_or_create_device_model(mapping["device_model"], device_type, mapping["approval_code"], default_user)
+                        device_variant = get_or_create_device_variant(mapping["device_variant"], device_model, default_user)
 
-                    # Add to migrated data
+                        # Prepare the device record for batch insert
+                        device_record = {
+                            "ecu_number": ecu_record.ecu,
+                            "device_type_id": device_type.id,
+                            "device_model_id": device_model.id,
+                            "device_variant_id": device_variant.id if device_variant else None,
+                            "dealer_id": dealer_id,
+                            "user_id": default_user.id,
+                            "lock": ecu_record.lock,
+                            "remarks": ecu_record.remarks,
+                            "created_at": ecu_record.add_date_timestamp,
+                            "updated_at": ecu_record.add_date_timestamp,
+                        }
+                        batch_device_records.append(device_record)
+
+                        # Add to device mappings for saving
+                        batch_device_mappings.append({
+                            "ecu_number": ecu_record.ecu,
+                            "dealer_id": dealer_id,
+                        })
+                        break  # Exit prefix-matching loop if matched
+
+            except Exception as e:
+                # Handle unmigrated devices
+                unmigrated_data.append({"ecu_number": ecu_record.ecu, "dealer_id": ecu_record.dealer_id, "reason": str(e)})
+
+        # Perform batch insert for the current batch
+        if batch_device_records:
+            try:
+                Device.insert_many(batch_device_records).execute()  # Batch insert
+
+                # Fetch the inserted devices to include in migrated data
+                for record in batch_device_records:
+                    device = Device.get(Device.ecu_number == record["ecu_number"])  # Fetch inserted record
                     migrated_data.append(
                         {
                             "device_id": device.id,
-                            "ecu_number": ecu_record.ecu,
-                            "device_type_name": device_type.name,
-                            "device_model_name": device_model.name,
-                            "device_variant_name": device_variant.name if device_variant else "",
+                            "ecu_number": device.ecu_number,
+                            "device_type_name": DeviceType.get_by_id(device.device_type_id).name,
+                            "device_model_name": DeviceModel.get_by_id(device.device_model_id).name,
+                            "device_variant_name": (
+                                DeviceVariant.get_by_id(device.device_variant_id).name
+                                if device.device_variant_id else ""
+                            ),
                             "dealer_id": dealer_id,
-                            "user_id": default_user.id,  # Default user's ID
-                            "created_at": ecu_record.add_date_timestamp,
+                            "user_id": default_user.id,
+                            "created_at": device.created_at,
                         }
                     )
 
-                    # Save mapping
-                    device_mappings[str(device.id)] = {
-                        "ecu_number": ecu_record.ecu,
-                        "dealer_id": dealer_id,
-                    }
-                    save_device_mappings(device_mappings)
-
+                # Save the mappings
+                for mapping in batch_device_mappings:
+                    device_mappings[mapping["ecu_number"]] = mapping
+                save_device_mappings(device_mappings)  # Save updated mappings
+                batch_device_records.clear()  # Clear after insert
+                batch_device_mappings.clear()  # Clear after mapping save
             except Exception as e:
-                unmigrated_data.append({"ecu_number": ecu_record.ecu, "dealer_id": ecu_record.dealer_id, "reason": str(e)})
+                print(f"Error during batch insert: {e}")
 
     return migrated_data, unmigrated_data
 
@@ -387,6 +423,10 @@ def run_migration():
 
     default_user = get_default_user()  # Fetch the default user
 
+    # Accumulate data for Excel report
+    all_migrated_data = []
+    all_unmigrated_data = []
+
     mode = questionary.select(
         "How would you like to perform the migration?",
         choices=["Run Fully Automated", "Migrate Devices One by One", "Migrate Devices for a Specific Dealer by ID"],
@@ -400,7 +440,8 @@ def run_migration():
                 if dealer_id:
                     unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
                     migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
-                    generate_excel_report(migrated_data, unmigrated_data)
+                    all_migrated_data.extend(migrated_data)
+                    all_unmigrated_data.extend(unmigrated_data)
 
         elif mode == "Migrate Devices One by One":
             print("Running Migration One by One...")
@@ -414,7 +455,8 @@ def run_migration():
                     if user_choice == "Migrate":
                         unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
                         migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
-                        generate_excel_report(migrated_data, unmigrated_data)
+                        all_migrated_data.extend(migrated_data)
+                        all_unmigrated_data.extend(unmigrated_data)
 
         elif mode == "Migrate Devices for a Specific Dealer by ID":
             dealer_id = questionary.text("Enter the Source Dealer ID to migrate:").ask()
@@ -425,7 +467,8 @@ def run_migration():
             dealer_id = int(dealer_id)
             unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
             migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
-            generate_excel_report(migrated_data, unmigrated_data)
+            all_migrated_data.extend(migrated_data)
+            all_unmigrated_data.extend(unmigrated_data)
 
         else:
             print("Invalid choice. Exiting...")
@@ -435,6 +478,7 @@ def run_migration():
     except Exception as e:
         print(f"Error during migration: {e}")
 
-
-if __name__ == "__main__":
-    run_migration()
+    finally:
+        # Generate Excel report even if an error occurs
+        generate_excel_report(all_migrated_data, all_unmigrated_data)
+        print("Migration process completed and report generated.")
