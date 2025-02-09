@@ -35,7 +35,48 @@ ecm_mapping = {
         "device_variant": "",
         "approval_code": "24-01-22785/Q24-01-048935/NB0002",
     },
-    # Add more mappings as necessary...
+    "DBW": {
+        "device_type": "Electronic Type Speed Limiter",
+        "device_model": "Fleetmax DBW",
+        "device_variant": "",
+        "approval_code": "24-01-22784/Q24-01-048943/NB0002",
+    },
+    "DBV": {
+        "device_type": "Fuel Type Speed Limiter",
+        "device_model": "Fleetmax DBV",
+        "device_variant": "",
+        "approval_code": "24-01-22784/Q24-01-048943/NB0002",
+    },
+    "ESL": {
+        "device_type": "Electronic Type Speed Limiter Limiter",
+        "device_model": "Resolute Dynamics ESL",
+        "device_variant": "",
+        "approval_code": "24-01-22783/Q24-01-048944/NB0002",
+    },
+    "FSL": {
+        "device_type": "Fuel Type Speed Limiter Limiter",
+        "device_model": "Resolute Dynamics FSL",
+        "device_variant": "",
+        "approval_code": "24-01-22783/Q24-01-048944/NB0002",
+    },
+    "ETM": {
+        "device_type": "Engine Temperature Monitor",
+        "device_model": "Resolute Dynamics ThermoPro",
+        "device_variant": "",
+        "approval_code": "24-01-22783/Q24-01-048944/NB0002",
+    },
+    "BAS": {
+        "device_type": "Brake Alert System",
+        "device_model": "Resolute Dynamics TailSafe",
+        "device_variant": "",
+        "approval_code": "24-01-22783/Q24-01-048944/NB0002",
+    },
+    "SAS": {
+        "device_type": "Speed Alert System",
+        "device_model": "Resolute Dynamics SAS",
+        "device_variant": "",
+        "approval_code": "24-01-22783/Q24-01-048944/NB0002",
+    },
 }
 
 # ----------------- SOURCE MODELS ----------------- #
