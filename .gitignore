@@ -7,9 +7,11 @@ __pycache__
 technician_migration_report.xlsx
 customer_migration_report.xlsx
 device_migration_report.xlsx
+certificate_migration_report.xlsx
 
 #mappings
 user_mappings.json
 device_mappings.json
 technicians_mapping.json
 customer_mappings.json
+certificates_mappings.json
