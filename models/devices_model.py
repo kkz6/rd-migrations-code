@@ -10,6 +10,7 @@ from peewee import (
     IntegerField,
     ForeignKeyField,
     DateTimeField,
+    DoesNotExist
 )
 from source_db import source_db
 from dest_db import dest_db
@@ -20,6 +21,8 @@ DEVICE_MAPPING_FILE = "device_mappings.json"
 USER_MAPPING_FILE = "user_mappings.json"
 EXCEL_FILE_NAME = "device_migration_report.xlsx"
 BATCH_SIZE = 20000  # Number of records per batch
+DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with the known admin email
+
 
 # ECU mapping (prefix-based). Adjust these as necessary.
 ecm_mapping = {
@@ -285,13 +288,16 @@ def get_or_create_device_variant(name: str, device_model: DeviceModel, user: Des
     return device_variant
 
 
-def get_device_data_by_ecu(ecu_record: EcuMaster, user: DestinationUser, new_dealer_id: int):
-    """Map ECU record to DeviceType, DeviceModel, and DeviceVariant, then create a Device record."""
+def get_device_data_by_ecu(ecu_record: EcuMaster, default_user: DestinationUser, new_dealer_id: int):
+    """
+    Map ECU record to DeviceType, DeviceModel, and DeviceVariant, then create a Device record.
+    Assign the default user's ID to the `user_id` field.
+    """
     for prefix, mapping in ecm_mapping.items():
         if ecu_record.ecu.startswith(prefix):
-            device_type = get_or_create_device_type(mapping["device_type"], user)
-            device_model = get_or_create_device_model(mapping["device_model"], device_type, mapping["approval_code"], user)
-            device_variant = get_or_create_device_variant(mapping["device_variant"], device_model, user)
+            device_type = get_or_create_device_type(mapping["device_type"], default_user)
+            device_model = get_or_create_device_model(mapping["device_model"], device_type, mapping["approval_code"], default_user)
+            device_variant = get_or_create_device_variant(mapping["device_variant"], device_model, default_user)
 
             device, created = Device.get_or_create(
                 ecu_number=ecu_record.ecu,
@@ -300,7 +306,7 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, user: DestinationUser, new_dea
                     "device_model_id": device_model.id,
                     "device_variant_id": device_variant.id if device_variant else None,
                     "dealer_id": new_dealer_id,
-                    "user_id": user.id,
+                    "user_id": default_user.id,  # Assign the default user's ID
                     "lock": ecu_record.lock,
                     "remarks": ecu_record.remarks,
                     "created_at": ecu_record.add_date_timestamp,
@@ -313,8 +319,10 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, user: DestinationUser, new_dea
     return None
 
 
-def migrate_devices_in_batches(unmigrated_devices, user, dealer_id, device_mappings):
-    """Migrate devices in batches to handle large datasets."""
+def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings):
+    """
+    Migrate devices in batches to handle large datasets, using the default user's ID for `user_id`.
+    """
     total_devices = len(unmigrated_devices)
     migrated_data = []
     unmigrated_data = []
@@ -325,7 +333,7 @@ def migrate_devices_in_batches(unmigrated_devices, user, dealer_id, device_mappi
 
         for ecu_record in batch:
             try:
-                device = get_device_data_by_ecu(ecu_record, user, dealer_id)
+                device = get_device_data_by_ecu(ecu_record, default_user, dealer_id)
                 if device:
                     # Fetch related data for DeviceType, DeviceModel, and DeviceVariant
                     device_type = DeviceType.get_by_id(device.device_type_id)
@@ -345,7 +353,7 @@ def migrate_devices_in_batches(unmigrated_devices, user, dealer_id, device_mappi
                             "device_model_name": device_model.name,
                             "device_variant_name": device_variant.name if device_variant else "",
                             "dealer_id": dealer_id,
-                            "user_id": user.id,
+                            "user_id": default_user.id,  # Default user's ID
                             "created_at": ecu_record.add_date_timestamp,
                         }
                     )
@@ -362,11 +370,22 @@ def migrate_devices_in_batches(unmigrated_devices, user, dealer_id, device_mappi
 
     return migrated_data, unmigrated_data
 
+def get_default_user():
+    """Get the default user for assigning user_id in the Device table."""
+    try:
+        return DestinationUser.get(DestinationUser.email == DEFAULT_USER_EMAIL)
+    except DoesNotExist:
+        raise Exception(f"Default user '{DEFAULT_USER_EMAIL}' not found.")
 
 def run_migration():
-    """Main function to run the device migration."""
+    """
+    Main function to run the device migration.
+    Ensures default user is used for `user_id` in migrated devices.
+    """
     user_mappings = load_json_mapping(USER_MAPPING_FILE)
     device_mappings = load_json_mapping(DEVICE_MAPPING_FILE)
+
+    default_user = get_default_user()  # Fetch the default user
 
     mode = questionary.select(
         "How would you like to perform the migration?",
@@ -380,8 +399,36 @@ def run_migration():
                 dealer_id = user_mappings.get(str(user.id), {}).get("dealer_id")
                 if dealer_id:
                     unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
-                    migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, user, dealer_id, device_mappings)
+                    migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
                     generate_excel_report(migrated_data, unmigrated_data)
+
+        elif mode == "Migrate Devices One by One":
+            print("Running Migration One by One...")
+            for user in DestinationUser.select():
+                dealer_id = user_mappings.get(str(user.id), {}).get("dealer_id")
+                if dealer_id:
+                    user_choice = questionary.select(
+                        f"Migrate devices for user {user.email} (mapped dealer ID: {dealer_id})?",
+                        choices=["Migrate", "Skip"],
+                    ).ask()
+                    if user_choice == "Migrate":
+                        unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
+                        migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
+                        generate_excel_report(migrated_data, unmigrated_data)
+
+        elif mode == "Migrate Devices for a Specific Dealer by ID":
+            dealer_id = questionary.text("Enter the Source Dealer ID to migrate:").ask()
+            if not dealer_id.isdigit():
+                print("Invalid Dealer ID. Please enter a numeric value.")
+                return
+
+            dealer_id = int(dealer_id)
+            unmigrated_devices = list_unmigrated_devices(dealer_id, device_mappings)
+            migrated_data, unmigrated_data = migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, device_mappings)
+            generate_excel_report(migrated_data, unmigrated_data)
+
+        else:
+            print("Invalid choice. Exiting...")
 
     except KeyboardInterrupt:
         print("Migration interrupted. Progress saved.")
