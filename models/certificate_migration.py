@@ -296,11 +296,26 @@ def run_one_by_one(mappings, default_user, certificate_mappings):
     records = list_unmigrated_certificates(certificate_mappings.keys())  # Pass dict_keys, handled by the function
     try:
         for record in records:
-            proceed = questionary.confirm(f"Migrate Certificate for ECU {record.ecu}?").ask()
-            if proceed:
+            answer = questionary.select(
+                f"Certificate for ECU {record.ecu}:",
+                choices=[
+                    "Migrate Certificate",
+                    "Skip Certificate",
+                    "Exit Migration"
+                ]
+            ).ask()
+
+            if answer == "Migrate Certificate":
                 certificate, errors = migrate_certificate(record, mappings, default_user, certificate_mappings)
                 if not certificate:
                     unmigrated.append({"ecu": record.ecu, "errors": errors})
+            elif answer == "Skip Certificate":
+                print(f"Skipping Certificate for ECU {record.ecu}.")
+                continue
+            elif answer == "Exit Migration":
+                print("Exiting migration as per user request.")
+                break
+
     except KeyboardInterrupt:
         print("\nMigration interrupted by user. Saving progress...")
     finally:
