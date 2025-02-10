@@ -22,7 +22,7 @@ TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"  # Global constant for tech
 CERTIFICATES_MAPPING_FILE = "certificates_mappings.json"
 DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Used for technician creation only
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
-THREAD_COUNT = 4
+THREAD_COUNT = 10
 
 # --- Helper Functions ---
 
@@ -92,6 +92,7 @@ def list_unmigrated_certificates(migrated_ids):
         return CertificateRecord.select()
 
 # --- Technician Mapping Function (using global constant for technician mapping file) ---
+
 def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, default_user, mappings):
     """
     Get or create a technician based on calibrater_user_id or technician_id.
@@ -151,6 +152,7 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
         return None
 
 # --- Certificate Migration Function with Extended Export Data ---
+
 # If batch_mode is False (default) the certificate is inserted immediately.
 # If batch_mode is True, it only prepares certificate_data and export_data.
 def migrate_certificate(record, mappings, default_user, certificate_mappings, batch_mode=False):
@@ -177,8 +179,16 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             mappings=mappings
         )
     else:
-        tech_id = mappings["technician"].get(str(record.installer_technician_id))
-        technician = Technician.get_or_none(id=tech_id)
+        # Instead of a direct get, iterate over the technician mapping to find the matching old technician id.
+        found_new_tech_id = None
+        for new_tech_id, tech_mapping in mappings["technician"].items():
+            if tech_mapping.get("old_technician_id") == record.installer_technician_id:
+                found_new_tech_id = int(new_tech_id)
+                break
+        if found_new_tech_id:
+            technician = Technician.get_or_none(id=found_new_tech_id)
+        else:
+            errors.append(f"Technician mapping for installer_technician_id {record.installer_technician_id} not found")
 
     if not technician:
         errors.append("Technician not found or could not be created")
@@ -256,7 +266,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "installed_for_id": customer.id,
         "vehicle_id": vehicle.id if vehicle else None,
         "km_reading": record.kilometer or 0,
-        # Use parse_speed to safely convert the speed value.
         "speed_limit": parse_speed(record.speed) if record.speed else 0,
         "print_count": record.print_count,
         "renewal_count": record.renewal_count,
@@ -307,6 +316,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         return (certificate_data, export_data), None
 
 # --- Worker for Fully Automated Batch Mode ---
+
 def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certificate_mappings):
     while not queue.empty():
         record = queue.get()
@@ -315,7 +325,8 @@ def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certi
             if result:
                 batch_results.append(result)  # result is (certificate_data, export_data)
             elif errors:
-                unmigrated.append({"ecu": record.ecu, "errors": errors})
+                # Join error messages into a single string for Excel export.
+                unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
         finally:
             queue.task_done()
 
@@ -342,7 +353,7 @@ def run_one_by_one(mappings, default_user, certificate_mappings):
                 if export_data:
                     migrated.append(export_data)
                 else:
-                    unmigrated.append({"ecu": record.ecu, "errors": errors})
+                    unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
             elif answer == "Skip Certificate":
                 print(f"Skipping Certificate for ECU {record.ecu}.")
                 continue
