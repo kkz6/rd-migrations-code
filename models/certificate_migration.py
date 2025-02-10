@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 import json
 import questionary
@@ -23,7 +24,20 @@ DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Used for technician creati
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
 THREAD_COUNT = 4
 
-# Helper Functions
+# --- Helper Functions ---
+
+def parse_speed(speed_str):
+    """
+    Extracts the first integer found in speed_str.
+    Returns 0 if no valid number is found.
+    """
+    if not speed_str:
+        return 0
+    match = re.search(r'\d+', speed_str)
+    if match:
+        return int(match.group())
+    return 0
+
 def load_mappings(file_path):
     try:
         with open(file_path, "r") as file:
@@ -77,7 +91,7 @@ def list_unmigrated_certificates(migrated_ids):
     else:
         return CertificateRecord.select()
 
-# Technician Mapping Function (using global constant for technician mapping file)
+# --- Technician Mapping Function (using global constant for technician mapping file) ---
 def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, default_user, mappings):
     """
     Get or create a technician based on calibrater_user_id or technician_id.
@@ -136,9 +150,9 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
         print(f"Error in creating or fetching technician: {e}")
         return None
 
-# Certificate Migration Function with Extended Export Data
-# When batch_mode is False (default) the certificate is inserted immediately.
-# When batch_mode is True, it only prepares certificate_data and export_data.
+# --- Certificate Migration Function with Extended Export Data ---
+# If batch_mode is False (default) the certificate is inserted immediately.
+# If batch_mode is True, it only prepares certificate_data and export_data.
 def migrate_certificate(record, mappings, default_user, certificate_mappings, batch_mode=False):
     print(f"Starting migration for Certificate ID {record.id} (ECU: {record.ecu})")
     errors = []
@@ -242,7 +256,8 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "installed_for_id": customer.id,
         "vehicle_id": vehicle.id if vehicle else None,
         "km_reading": record.kilometer or 0,
-        "speed_limit": int(record.speed) if record.speed else 0,
+        # Use parse_speed to safely convert the speed value.
+        "speed_limit": parse_speed(record.speed) if record.speed else 0,
         "print_count": record.print_count,
         "renewal_count": record.renewal_count,
         "description": record.description,
@@ -251,7 +266,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "user_id": user_id_val
     }
 
-    # Prepare extended export data; new_certificate_id is set later in batch mode.
     export_data = {
         "ecu": record.ecu,
         "old_certificate_id": record.id,
@@ -272,10 +286,8 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
 
     if not batch_mode:
         try:
-            # Immediate insertion mode.
             new_cert = Certificate.create(**certificate_data)
             export_data["new_certificate_id"] = new_cert.id
-            # Update certificate mapping immediately.
             if str(record.id) not in certificate_mappings:
                 certificate_mappings[str(record.id)] = {
                     "old_certificate_id": record.id,
@@ -291,25 +303,24 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             print(f"Error migrating Certificate ID {record.id}: {errors}")
             return None, errors
     else:
-        # In batch mode, just return the prepared data; insertion will be done later.
+        # In batch mode, return the prepared data; insertion will be done later.
         return (certificate_data, export_data), None
 
-# Worker for Fully Automated Batch Mode.
-# It calls migrate_certificate with batch_mode=True and appends the returned tuple to a shared list.
+# --- Worker for Fully Automated Batch Mode ---
 def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certificate_mappings):
     while not queue.empty():
         record = queue.get()
         try:
             result, errors = migrate_certificate(record, mappings, default_user, certificate_mappings, batch_mode=True)
             if result:
-                # result is a tuple: (certificate_data, export_data)
-                batch_results.append(result)
+                batch_results.append(result)  # result is (certificate_data, export_data)
             elif errors:
                 unmigrated.append({"ecu": record.ecu, "errors": errors})
         finally:
             queue.task_done()
 
-# run_one_by_one remains using immediate insertion.
+# --- Migration Modes ---
+
 def run_one_by_one(mappings, default_user, certificate_mappings):
     print("Starting One-by-One Migration")
     migrated = []
@@ -345,10 +356,9 @@ def run_one_by_one(mappings, default_user, certificate_mappings):
         save_mappings(CERTIFICATES_MAPPING_FILE, certificate_mappings)
         save_to_excel(migrated, unmigrated)
 
-# Fully Automated Migration using Batch Insert.
 def run_fully_automated(mappings, default_user, certificate_mappings):
     print("Starting Fully Automated Migration (Batch Insert Mode)")
-    batch_results = []  # Will hold tuples of (certificate_data, export_data)
+    batch_results = []  # Holds tuples: (certificate_data, export_data)
     unmigrated = []
     records = list_unmigrated_certificates(list(certificate_mappings.keys()))
     queue = Queue()
@@ -364,28 +374,27 @@ def run_fully_automated(mappings, default_user, certificate_mappings):
     for thread in threads:
         thread.join()
 
+    export_data_list = []
     if batch_results:
-        # Separate the prepared certificate data and export data.
         certificate_data_list = [item[0] for item in batch_results]
         export_data_list = [item[1] for item in batch_results]
         try:
-            # Perform a bulk insert.
-            # Using returning() to get the new certificate IDs.
+            # Attempt bulk insert with returning().
             query = Certificate.insert_many(certificate_data_list).returning(Certificate.id)
             new_ids = list(query.execute())
-            # Update export_data with the new certificate ids and update certificate_mappings.
-            for idx, new_cert_id in enumerate(new_ids):
-                export_data_list[idx]["new_certificate_id"] = new_cert_id
-                # Here we update the certificate mapping (old_certificate_id -> new details)
-                old_cert_id = export_data_list[idx]["old_certificate_id"]
-                if str(old_cert_id) not in certificate_mappings:
-                    # We can store minimal mapping info as before.
-                    certificate_mappings[str(old_cert_id)] = {
-                        "old_certificate_id": old_cert_id,
-                        "dealer_id": export_data_list[idx]["device_id"],  # Example; adjust as needed.
-                    }
         except Exception as e:
-            print(f"Batch insert failed: {e}")
+            print(f"Batch insert with returning() failed: {e}")
+            # Fallback for databases (like MySQL) that don't support returning():
+            Certificate.insert_many(certificate_data_list).execute()
+            new_ids = [None] * len(certificate_data_list)
+        for idx, new_cert_id in enumerate(new_ids):
+            export_data_list[idx]["new_certificate_id"] = new_cert_id
+            old_cert_id = export_data_list[idx]["old_certificate_id"]
+            if str(old_cert_id) not in certificate_mappings:
+                certificate_mappings[str(old_cert_id)] = {
+                    "old_certificate_id": old_cert_id,
+                    "dealer_id": export_data_list[idx].get("device_id"),  # Adjust mapping info as needed.
+                }
     else:
         export_data_list = []
 
