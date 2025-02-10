@@ -51,13 +51,13 @@ ecm_mapping = {
         "approval_code": "24-01-22784/Q24-01-048943/NB0002",
     },
     "ESL": {
-        "device_type": "Electronic Type Speed Limiter Limiter",
+        "device_type": "Electronic Type Speed Limiter",
         "device_model": "Resolute Dynamics ESL",
         "device_variant": "",
         "approval_code": "24-01-22783/Q24-01-048944/NB0002",
     },
     "FSL": {
-        "device_type": "Fuel Type Speed Limiter Limiter",
+        "device_type": "Fuel Type Speed Limiter",
         "device_model": "Resolute Dynamics FSL",
         "device_variant": "",
         "approval_code": "24-01-22783/Q24-01-048944/NB0002",
