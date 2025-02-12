@@ -172,12 +172,15 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
     # Technician Mapping or Creation
     technician = None
     if record.installer_technician_id == 0:
-        technician = get_or_create_technician_for_certificate(
-            calibrater_user_id=record.caliberater_user_id,
-            technician_id=record.installer_technician_id,
-            default_user=default_user,
-            mappings=mappings
-        )
+        try:
+            technician = get_or_create_technician_for_certificate(
+                calibrater_user_id=record.caliberater_user_id,
+                technician_id=record.installer_technician_id,
+                default_user=default_user,
+                mappings=mappings
+            )
+        except Exception as e:
+            errors.append(f"Technician creation error: {e.__class__.__name__}: {str(e)}")
     else:
         found_new_tech_id = None
         for new_tech_id, tech_mapping in mappings["technician"].items():
@@ -188,25 +191,34 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             technician = Technician.get_or_none(id=found_new_tech_id)
         else:
             errors.append(f"Technician mapping for installer_technician_id {record.installer_technician_id} not found")
+    
     if not technician:
-        errors.append("Technician not found or could not be created")
+        if not any("Technician creation error" in err for err in errors):
+            errors.append("Technician not found or could not be created")
 
-    # Vehicle Mapping or Creation
-    vehicle = Vehicle.get_or_none(vehicle_chassis_no=record.vehicle_chassis)
-    if not vehicle and record.vehicle_type:
+    # --- Vehicle Mapping or Creation using get_or_create for thread safety ---
+    if record.vehicle_type:
         vehicle_brand_model = record.vehicle_type.split(" ", 1)
         brand = vehicle_brand_model[0]
         model = vehicle_brand_model[1] if len(vehicle_brand_model) > 1 else brand
         try:
-            vehicle = Vehicle.create(
-                brand=brand,
-                model=model,
-                vehicle_no=record.vehicle_registration,
+            vehicle, created = Vehicle.get_or_create(
                 vehicle_chassis_no=record.vehicle_chassis,
-                new_registration=False
+                defaults={
+                    "brand": brand,
+                    "model": model,
+                    "vehicle_no": record.vehicle_registration,
+                    "new_registration": False
+                }
             )
         except IntegrityError as ie:
-            errors.append(f"IntegrityError: {str(ie)}")
+            # In case of a race condition, try to retrieve the vehicle again.
+            try:
+                vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
+            except Exception as e:
+                errors.append(f"Vehicle creation failed: {e.__class__.__name__}: {str(e)}")
+    else:
+        vehicle = Vehicle.get_or_none(vehicle_chassis_no=record.vehicle_chassis)
 
     if errors:
         print(f"Skipping Certificate ID {record.id} due to errors: {errors}")
@@ -243,21 +255,18 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         return None, errors
 
     # --- Determine certificate status ---
-    # Retrieve the maximum renewal_count for the given ECU. Default to 0 if none found.
     max_renewal = CertificateRecord.select(fn.MAX(CertificateRecord.renewal_count))\
                     .where(CertificateRecord.ecu == record.ecu).scalar() or 0
-    # If the current record's renewal_count is less than the maximum, it's not the last renewal.
     if record.renewal_count < max_renewal:
         status = "renewed"
     else:
         status = "active"
 
-    # Override status if needed
     status = "nullified" if record.serialno is None else status
     status = "cancelled" if record.date_cancelation else status
     status = "blocked" if record.activstate == 0 else status
 
-    # Build the certificate data dictionary (for insertion) and export data dictionary.
+    # --- Build Data Dictionaries ---
     certificate_data = {
         "serial_number": record.serialno,
         "status": status,
@@ -267,7 +276,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "expiry_date": record.date_expiry,
         "cancellation_date": record.date_cancelation,
         "cancelled": (record.date_cancelation is not None),
-        "installed_by_id": technician.id,
+        "installed_by_id": technician.id if technician else None,
         "installed_for_id": customer.id,
         "vehicle_id": vehicle.id if vehicle else None,
         "km_reading": record.kilometer or 0,
@@ -286,7 +295,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "certificate_serial": certificate_data.get("serial_number"),
         "status": certificate_data.get("status"),
         "old_technician_id": record.installer_technician_id,
-        "new_technician_id": technician.id,
+        "new_technician_id": technician.id if technician else None,
         "dealer_name": dealer_obj.name if dealer_obj else "N/A",
         "installation_date": certificate_data.get("installation_date"),
         "calibration_date": certificate_data.get("calibration_date"),
@@ -312,7 +321,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
                     "old_certificate_id": record.id,
                     "device_id": device.id,
                     "customer_id": customer.id,
-                    "technician_id": technician.id,
+                    "technician_id": technician.id if technician else None,
                     "vehicle_id": vehicle.id if vehicle else None,
                     "dealer_id": dealer_id_val,
                 }
