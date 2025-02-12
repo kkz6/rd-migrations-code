@@ -6,7 +6,7 @@ from openpyxl import Workbook
 from typing import List
 from threading import Thread
 from queue import Queue
-from peewee import DoesNotExist, IntegrityError
+from peewee import *
 from models.certificates_model import CertificateRecord, Certificate
 from models.devices_model import Device
 from models.customers_model import Customer
@@ -179,7 +179,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             mappings=mappings
         )
     else:
-        # Instead of a direct get, iterate over the technician mapping to find the matching old technician id.
         found_new_tech_id = None
         for new_tech_id, tech_mapping in mappings["technician"].items():
             if tech_mapping.get("old_technician_id") == record.installer_technician_id:
@@ -189,7 +188,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             technician = Technician.get_or_none(id=found_new_tech_id)
         else:
             errors.append(f"Technician mapping for installer_technician_id {record.installer_technician_id} not found")
-
     if not technician:
         errors.append("Technician not found or could not be created")
 
@@ -207,14 +205,14 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
                 vehicle_chassis_no=record.vehicle_chassis,
                 new_registration=False
             )
-        except IntegrityError:
-            errors.append("Vehicle creation failed")
+        except IntegrityError as ie:
+            errors.append(f"IntegrityError: {str(ie)}")
 
     if errors:
         print(f"Skipping Certificate ID {record.id} due to errors: {errors}")
         return None, errors
 
-    # --- Dealer Mapping (Updated) ---
+    # --- Dealer Mapping ---
     dealer_errors = []
     dealer_obj = None
     old_dealer_id = getattr(record, 'dealer_id', None)
@@ -222,10 +220,9 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         dealer_errors.append("No dealer id found in record")
     else:
         new_dealer_id = None
-        # Look for a mapping where the mapping's dealer_id equals the certificate's old dealer id.
         for key, user_map in mappings["user"].items():
             if user_map.get("dealer_id") == old_dealer_id:
-                new_dealer_id = int(key)  # The mapping key represents the new dealer id.
+                new_dealer_id = int(key)
                 break
         if not new_dealer_id:
             dealer_errors.append(f"No matching dealer mapping found for dealer id {old_dealer_id}")
@@ -238,16 +235,24 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
                 else:
                     dealer_id_val = dealer_obj.id
                     user_id_val = dealer_obj.id
-            except DoesNotExist:
-                dealer_errors.append(f"Dealer not found in DestinationUser for new_dealer_id {new_dealer_id}")
-
+            except DoesNotExist as dne:
+                dealer_errors.append(f"DoesNotExist: {str(dne)}")
     if dealer_errors:
         errors.extend(dealer_errors)
         print(f"Skipping Certificate ID {record.id} due to dealer mapping errors: {dealer_errors}")
         return None, errors
 
-    # Determine certificate status based on record fields.
-    status = "renewed" if record.renewal_count > 0 else "active"
+    # --- Determine certificate status ---
+    # Retrieve the maximum renewal_count for the given ECU. Default to 0 if none found.
+    max_renewal = CertificateRecord.select(fn.MAX(CertificateRecord.renewal_count))\
+                    .where(CertificateRecord.ecu == record.ecu).scalar() or 0
+    # If the current record's renewal_count is less than the maximum, it's not the last renewal.
+    if record.renewal_count < max_renewal:
+        status = "renewed"
+    else:
+        status = "active"
+
+    # Override status if needed
     status = "nullified" if record.serialno is None else status
     status = "cancelled" if record.date_cancelation else status
     status = "blocked" if record.activstate == 0 else status
@@ -274,7 +279,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "dealer_id": dealer_id_val,
         "user_id": user_id_val
     }
-
     export_data = {
         "ecu": record.ecu,
         "old_certificate_id": record.id,
@@ -314,13 +318,14 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
                 }
             return export_data, None
         except Exception as e:
-            errors.append(str(e))
+            errors.append(f"{e.__class__.__name__}: {str(e)}")
             print(f"Error migrating Certificate ID {record.id}: {errors}")
             return None, errors
     else:
         # In batch mode, return the prepared data; insertion will be done later.
         return (certificate_data, export_data), None
-# --- Worker for Fully Automated Batch Mode ---
+
+
 
 def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certificate_mappings):
     while not queue.empty():
@@ -332,6 +337,9 @@ def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certi
             elif errors:
                 # Join error messages into a single string for Excel export.
                 unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
+        except Exception as e:
+            # Capture any unexpected errors in the worker thread.
+            unmigrated.append({"ecu": record.ecu, "errors": f"{e.__class__.__name__}: {str(e)}"})
         finally:
             queue.task_done()
 
@@ -399,7 +407,7 @@ def run_fully_automated(mappings, default_user, certificate_mappings):
             query = Certificate.insert_many(certificate_data_list).returning(Certificate.id)
             new_ids = list(query.execute())
         except Exception as e:
-            print(f"Batch insert with returning() failed: {e}")
+            print(f"Batch insert with returning() failed: {e.__class__.__name__}: {str(e)}")
             # Fallback for databases (like MySQL) that don't support returning():
             Certificate.insert_many(certificate_data_list).execute()
             new_ids = [None] * len(certificate_data_list)
