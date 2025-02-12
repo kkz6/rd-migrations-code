@@ -297,6 +297,12 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         try:
             new_cert = Certificate.create(**certificate_data)
             export_data["new_certificate_id"] = new_cert.id
+
+            # --- Update the Vehicle Record ---
+            if vehicle:
+                vehicle.certificate_id = new_cert.id
+                vehicle.save()
+
             if str(record.id) not in certificate_mappings:
                 certificate_mappings[str(record.id)] = {
                     "old_certificate_id": record.id,
@@ -314,7 +320,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
     else:
         # In batch mode, return the prepared data; insertion will be done later.
         return (certificate_data, export_data), None
-
 # --- Worker for Fully Automated Batch Mode ---
 
 def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certificate_mappings):
@@ -400,6 +405,12 @@ def run_fully_automated(mappings, default_user, certificate_mappings):
             new_ids = [None] * len(certificate_data_list)
         for idx, new_cert_id in enumerate(new_ids):
             export_data_list[idx]["new_certificate_id"] = new_cert_id
+
+            # --- Update the corresponding Vehicle record with the new certificate id ---
+            vehicle_id = export_data_list[idx].get("vehicle_id")
+            if vehicle_id:
+                Vehicle.update({Vehicle.certificate_id: new_cert_id}).where(Vehicle.id == vehicle_id).execute()
+
             old_cert_id = export_data_list[idx]["old_certificate_id"]
             if str(old_cert_id) not in certificate_mappings:
                 certificate_mappings[str(old_cert_id)] = {
