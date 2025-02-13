@@ -69,7 +69,7 @@ class Certificate(Model):
     print_count = IntegerField(default=0, null=False)
     renewal_count = IntegerField(default=0, null=False)
     description = TextField(null=True)
-    country = CharField(max_length=255, null=True)
+    country_id = IntegerField(default=231)
     dealer_id = ForeignKeyField(DestinationUser, null=False)
     user_id = ForeignKeyField(DestinationUser, null=False)
     enable_renewal = BooleanField(default=False)

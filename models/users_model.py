@@ -42,7 +42,6 @@ class User(Model):
     email = CharField(max_length=255, unique=True)
     mobile = TextField(null=True)
     usertype = TextField(default="Installer")
-    country = TextField(default="India")
     add_date = DateTimeField()
     added_by_user_id = IntegerField()
     forgotpassword = IntegerField(default=0)
@@ -74,7 +73,7 @@ class DestinationUser(Model):
     mobile = CharField(max_length=255, null=True)
     emirates = CharField(max_length=255, null=True)
     timezone = CharField(max_length=255, null=True)
-    country = CharField(max_length=255, null=True)
+    country_id = IntegerField(default=231)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
     created_at = DateTimeField(null=True)
@@ -242,7 +241,7 @@ def migrate_user(
             phone=selected_user.mobile,
             mobile=selected_user.mobile,
             timezone=DEFAULT_TIMEZONE,
-            country=selected_user.country,
+            country_id=231,
             created_at=add_date,
             updated_at=add_date,
         )
@@ -402,7 +401,7 @@ def run_migration() -> None:
                         "email": dealer.email,
                         "company": dealer.company,
                         "mobile": dealer.phone,
-                        "country": "UAE",
+                        "country_id": 231,
                         "username": generate_unique_username(dealer.email),
                     }
                     print("\nDefault data for the new user:")
@@ -427,7 +426,7 @@ def run_migration() -> None:
                             phone=new_user_data["mobile"],
                             mobile=new_user_data["mobile"],
                             timezone=DEFAULT_TIMEZONE,
-                            country=new_user_data["country"],
+                            country_id=231,
                             created_at=dealer.add_date,
                             updated_at=dealer.add_date,
                         )
