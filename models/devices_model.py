@@ -115,6 +115,7 @@ class DeviceType(Model):
     name = CharField(max_length=255)
     enabled = IntegerField(default=1)
     user_id = BigIntegerField()
+    country_id = IntegerField()
     created_at = DateTimeField(null=True)
     updated_at = DateTimeField(null=True)
 
@@ -128,6 +129,7 @@ class DeviceModel(Model):
     name = CharField(max_length=255)
     enabled = IntegerField(default=1)
     user_id = BigIntegerField()
+    country_id = IntegerField()
     device_type_id = ForeignKeyField(DeviceType, backref="device_models", on_delete="CASCADE")
     approval_code = CharField(max_length=255, default="0000")
     created_at = DateTimeField(null=True)
@@ -145,6 +147,7 @@ class DeviceVariant(Model):
     enabled = IntegerField(default=1)
     device_model_id = ForeignKeyField(DeviceModel, backref="variants", on_delete="CASCADE")
     user_id = BigIntegerField()
+    country_id = IntegerField()
     created_at = DateTimeField(null=True)
     updated_at = DateTimeField(null=True)
 
@@ -163,6 +166,7 @@ class Device(Model):
     lock = IntegerField(default=0)
     dealer_id = BigIntegerField(null=True)
     user_id = BigIntegerField()
+    country_id = IntegerField()
     created_at = DateTimeField(null=True)
     updated_at = DateTimeField(null=True)
 
@@ -275,6 +279,7 @@ def get_or_create_device_type(name: str, user: DestinationUser):
         name=name,
         defaults={
             "user_id": user.id,
+            "country_id": 231,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         },
@@ -289,6 +294,7 @@ def get_or_create_device_model(name: str, device_type: DeviceType, approval_code
         approval_code=approval_code,
         defaults={
             "user_id": user.id,
+            "country_id": 231,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         },
@@ -303,6 +309,7 @@ def get_or_create_device_variant(name: str, device_model: DeviceModel, user: Des
         device_model_id=device_model.id,
         defaults={
             "user_id": user.id,
+            "country_id": 231,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         },
@@ -330,6 +337,7 @@ def get_device_data_by_ecu(ecu_record: EcuMaster, default_user: DestinationUser,
                     "dealer_id": new_dealer_id,
                     "user_id": default_user.id,  # Assign the default user's ID
                     "lock": ecu_record.lock,
+                    "country_id": 231,
                     "remarks": ecu_record.remarks,
                     "created_at": ecu_record.add_date_timestamp,
                     "updated_at": ecu_record.add_date_timestamp,
@@ -380,6 +388,7 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, dealer_id, devi
                             "device_variant_id": device_variant.id if device_variant else None,
                             "dealer_id": dealer_id,
                             "user_id": default_user.id,
+                            "country_id": 231,
                             "lock": ecu_record.lock,
                             "remarks": ecu_record.remarks,
                             "created_at": ecu_record.add_date_timestamp,
