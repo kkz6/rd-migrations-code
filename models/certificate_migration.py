@@ -13,6 +13,7 @@ from models.customers_model import Customer
 from models.technicians_model import Technician
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
+from tqdm import tqdm  # New import for progress bar
 
 # Global Constants / Configurations
 CUSTOMER_MAPPING_FILE = "customer_mappings.json"
@@ -21,7 +22,7 @@ DEVICE_MAPPING_FILE = "devices_mappings.json"
 TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"  # Global constant for technician mapping file
 CERTIFICATES_MAPPING_FILE = "certificates_mappings.json"
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
-THREAD_COUNT = 10
+THREAD_COUNT = 20
 
 # --- Helper Functions ---
 
@@ -95,7 +96,7 @@ def safe_int(val):
         return int(val)
     except (ValueError, TypeError):
         return 0
-    
+
 def get_or_create_technician_for_certificate(calibrater_user_id, caliberater_technician_id, installer_user_id, installer_technician_id, mappings):
     """
     Retrieves or creates technicians for both calibration and installation.
@@ -213,8 +214,6 @@ def get_or_create_technician_for_certificate(calibrater_user_id, caliberater_tec
 
 # --- Certificate Migration Function with Extended Export Data ---
 
-# If batch_mode is False (default) the certificate is inserted immediately.
-# If batch_mode is True, it only prepares certificate_data and export_data.
 def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False):
     print(f"Starting migration for Certificate ID {record.id} (ECU: {record.ecu})")
     errors = []
@@ -266,7 +265,6 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
                 }
             )
         except IntegrityError as ie:
-            # In case of a race condition, try to retrieve the vehicle again.
             try:
                 vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
             except Exception as e:
@@ -387,7 +385,7 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         # In batch mode, return the prepared data; insertion will be done later.
         return (certificate_data, export_data), None
 
-def worker_batch(queue, batch_results, unmigrated, mappings, certificate_mappings):
+def worker_batch(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar):
     while not queue.empty():
         record = queue.get()
         try:
@@ -395,12 +393,11 @@ def worker_batch(queue, batch_results, unmigrated, mappings, certificate_mapping
             if result:
                 batch_results.append(result)  # result is (certificate_data, export_data)
             elif errors:
-                # Join error messages into a single string for Excel export.
                 unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
         except Exception as e:
-            # Capture any unexpected errors in the worker thread.
             unmigrated.append({"ecu": record.ecu, "errors": f"{e.__class__.__name__}: {str(e)}"})
         finally:
+            progress_bar.update(1)
             queue.task_done()
 
 # --- Migration Modes ---
@@ -410,12 +407,17 @@ def run_one_by_one(mappings, certificate_mappings):
     migrated = []
     unmigrated = []
     records = list_unmigrated_certificates(list(certificate_mappings.keys()))
-    print(f"Total unmigrated certificates: {records.count()}")
+    total_records = records.count()
+    print(f"Total unmigrated certificates: {total_records}")
+    migrated_count = 0
+    failed_count = 0
+    processed_count = 0
 
     try:
         for record in records:
+            print(f"\nProcessing Certificate {processed_count + 1} of {total_records} (ECU: {record.ecu})")
             answer = questionary.select(
-                f"Certificate for ECU {record.ecu}:",
+                f"Choose action for Certificate with ECU {record.ecu}:",
                 choices=[
                     "Migrate Certificate",
                     "Skip Certificate",
@@ -427,15 +429,19 @@ def run_one_by_one(mappings, certificate_mappings):
                 export_data, errors = migrate_certificate(record, mappings, certificate_mappings, batch_mode=False)
                 if export_data:
                     migrated.append(export_data)
+                    migrated_count += 1
+                    print("Certificate migrated successfully!")
                 else:
                     unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
+                    failed_count += 1
+                    print(f"Migration failed with errors: {errors}")
             elif answer == "Skip Certificate":
                 print(f"Skipping Certificate for ECU {record.ecu}.")
-                continue
             elif answer == "Exit Migration":
                 print("Exiting migration as per user request.")
                 break
-
+            processed_count += 1
+            print(f"Progress: {processed_count}/{total_records} processed | Migrated: {migrated_count} | Failed: {failed_count}")
     except KeyboardInterrupt:
         print("\nMigration interrupted by user. Saving progress...")
     finally:
@@ -447,18 +453,25 @@ def run_fully_automated(mappings, certificate_mappings):
     batch_results = []  # Holds tuples: (certificate_data, export_data)
     unmigrated = []
     records = list_unmigrated_certificates(list(certificate_mappings.keys()))
+    total_records = records.count()
+    print(f"Total unmigrated certificates: {total_records}")
+
     queue = Queue()
     for record in records:
         queue.put(record)
 
+    # Initialize progress bar with total count.
+    progress_bar = tqdm(total=total_records, desc="Migrating Certificates", ncols=100, colour="green")
+    
     threads = []
     for _ in range(THREAD_COUNT):
-        thread = Thread(target=worker_batch, args=(queue, batch_results, unmigrated, mappings, certificate_mappings))
+        thread = Thread(target=worker_batch, args=(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar))
         thread.start()
         threads.append(thread)
 
     for thread in threads:
         thread.join()
+    progress_bar.close()
 
     export_data_list = []
     if batch_results:
@@ -470,13 +483,12 @@ def run_fully_automated(mappings, certificate_mappings):
             new_ids = list(query.execute())
         except Exception as e:
             print(f"Batch insert with returning() failed: {e.__class__.__name__}: {str(e)}")
-            # Fallback for databases (like MySQL) that don't support returning():
             Certificate.insert_many(certificate_data_list).execute()
             new_ids = [None] * len(certificate_data_list)
         for idx, new_cert_id in enumerate(new_ids):
             export_data_list[idx]["new_certificate_id"] = new_cert_id
 
-            # --- Update the corresponding Vehicle record with the new certificate id ---
+            # Update the corresponding Vehicle record with the new certificate id.
             vehicle_id = export_data_list[idx].get("vehicle_id")
             if vehicle_id:
                 Vehicle.update({Vehicle.certificate_id: new_cert_id}).where(Vehicle.id == vehicle_id).execute()
