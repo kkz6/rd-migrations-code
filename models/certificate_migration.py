@@ -164,10 +164,14 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
     if not device:
         errors.append("Device not found")
 
-    # Customer Mapping
-    customer = Customer.get_or_none(Customer.id == mappings.get("customer", {}).get(str(record.customer_id)))
-    if not customer:
-        errors.append("Customer not found")
+    # Customer Mapping (modified)
+    if record.customer_id is None:
+        customer = None
+    else:
+        mapped_customer_id = mappings.get("customer", {}).get(str(record.customer_id))
+        customer = Customer.get_or_none(Customer.id == mapped_customer_id) if mapped_customer_id else None
+        if not customer:
+            errors.append("Customer not found")
 
     # Technician Mapping or Creation
     technician = None
@@ -196,7 +200,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         if not any("Technician creation error" in err for err in errors):
             errors.append("Technician not found or could not be created")
 
-    # --- Vehicle Mapping or Creation using get_or_create for thread safety ---
+    # Vehicle Mapping or Creation using get_or_create for thread safety
     if record.vehicle_type:
         vehicle_brand_model = record.vehicle_type.split(" ", 1)
         brand = vehicle_brand_model[0]
@@ -224,7 +228,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         print(f"Skipping Certificate ID {record.id} due to errors: {errors}")
         return None, errors
 
-    # --- Dealer Mapping ---
+    # Dealer Mapping
     dealer_errors = []
     dealer_obj = None
     old_dealer_id = getattr(record, 'dealer_id', None)
@@ -254,7 +258,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         print(f"Skipping Certificate ID {record.id} due to dealer mapping errors: {dealer_errors}")
         return None, errors
 
-    # --- Determine certificate status ---
+    # Determine certificate status
     max_renewal = CertificateRecord.select(fn.MAX(CertificateRecord.renewal_count))\
                     .where(CertificateRecord.ecu == record.ecu).scalar() or 0
     if record.renewal_count < max_renewal:
@@ -266,7 +270,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
     status = "cancelled" if record.date_cancelation else status
     status = "blocked" if record.activstate == 0 else status
 
-    # --- Build Data Dictionaries ---
+    # Build Data Dictionaries
     certificate_data = {
         "serial_number": record.serialno,
         "status": status,
@@ -277,7 +281,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "cancellation_date": record.date_cancelation,
         "cancelled": (record.date_cancelation is not None),
         "installed_by_id": technician.id if technician else None,
-        "installed_for_id": customer.id,
+        "installed_for_id": customer.id if customer else None,  # Allows null if customer is None
         "vehicle_id": vehicle.id if vehicle else None,
         "km_reading": record.kilometer or 0,
         "speed_limit": parse_speed(record.speed) if record.speed else 0,
@@ -311,7 +315,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
             new_cert = Certificate.create(**certificate_data)
             export_data["new_certificate_id"] = new_cert.id
 
-            # --- Update the Vehicle Record ---
+            # Update the Vehicle Record
             if vehicle:
                 vehicle.certificate_id = new_cert.id
                 vehicle.save()
@@ -320,7 +324,7 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
                 certificate_mappings[str(record.id)] = {
                     "old_certificate_id": record.id,
                     "device_id": device.id,
-                    "customer_id": customer.id,
+                    "customer_id": customer.id if customer else None,
                     "technician_id": technician.id if technician else None,
                     "vehicle_id": vehicle.id if vehicle else None,
                     "dealer_id": dealer_id_val,
@@ -333,8 +337,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
     else:
         # In batch mode, return the prepared data; insertion will be done later.
         return (certificate_data, export_data), None
-
-
 
 def worker_batch(queue, batch_results, unmigrated, mappings, default_user, certificate_mappings):
     while not queue.empty():
