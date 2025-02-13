@@ -2,17 +2,7 @@ import json
 import questionary
 from datetime import datetime
 from openpyxl import Workbook
-from peewee import (
-    Model,
-    CharField,
-    BigIntegerField,
-    TextField,
-    IntegerField,
-    ForeignKeyField,
-    DateTimeField,
-    IntegrityError,
-    DoesNotExist,
-)
+from peewee import *
 from source_db import source_db
 from dest_db import dest_db
 from models.users_model import DestinationUser
@@ -43,6 +33,7 @@ class Technician(Model):
     email = CharField(max_length=255)
     phone = CharField(max_length=255)
     user_id = BigIntegerField()
+    country_id = BigIntegerField()
     created_by = ForeignKeyField(
         DestinationUser, field="id", null=True, column_name="created_by"
     )
@@ -186,6 +177,7 @@ def migrate_single_technician_data(record, new_user_id):
             email=record.technician_email,
             phone=record.technician_phone,
             user_id=user_id_field,
+            country_id=231,  # Set country_id as 231
             created_by=created_by_field,
             created_at=record.add_date,
             updated_at=record.add_date,
@@ -208,6 +200,7 @@ def migrate_single_technician_data(record, new_user_id):
                     "name": record.technician_name,
                     "phone": record.technician_phone,
                     "user_id": user_id_field,
+                    "country_id": 231,  # Also update country_id here
                     "created_by": created_by_field,
                 }
             ).where(Technician.email == record.technician_email).execute()
@@ -283,6 +276,7 @@ def migrate_technicians(automated=False):
                     "email": record.technician_email,
                     "phone": record.technician_phone,
                     "user_id": user_id_field,
+                    "country_id": 231,  # Set country_id here for batch inserts as well
                     "created_by": created_by_field,
                     "created_at": record.add_date,
                     "updated_at": record.add_date,
