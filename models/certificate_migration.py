@@ -93,10 +93,13 @@ def list_unmigrated_certificates(migrated_ids):
 
 # --- Technician Mapping Function (using global constant for technician mapping file) ---
 
-def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, default_user, mappings):
+def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, mappings):
     """
     Get or create a technician based on calibrater_user_id or technician_id.
     Uses the global TECHNICIAN_MAPPING_FILE for saving mappings.
+    Instead of using a default user, when fetching the user from the user mapping:
+      - If the user record has a non-null parent_id, assign technician.user_id to parent_id and technician.created_by to the user's id.
+      - If parent_id is null, assign both technician.user_id and technician.created_by to the user's id.
     """
     try:
         technician_mappings = mappings["technician"]
@@ -108,7 +111,7 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
                     print(f"Technician already exists for old_technician_id {technician_id}. Using Technician ID {new_technician_id}.")
                     return Technician.get_by_id(int(new_technician_id))
 
-        # Otherwise, use calibrater_user_id to find the new user mapping.
+        # Use calibrater_user_id to find the new user mapping.
         user_mappings = mappings["user"]
         new_user_id = None
         for user_id, mapping in user_mappings.items():
@@ -119,20 +122,28 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
         if not new_user_id:
             raise Exception(f"No mapping found for calibrater_user_id {calibrater_user_id} in user mappings.")
 
-        # Check if a technician already exists for the user.
+        # Retrieve the calibrater user record.
         calibrater_user = DestinationUser.get_by_id(new_user_id)
         existing_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
         if existing_technician:
             print(f"Technician with email {calibrater_user.email} already exists. Using existing technician.")
             return existing_technician
 
+        # Determine technician's user_id and created_by based on calibrater_user.parent_id.
+        if calibrater_user.parent_id:
+            user_id_field = calibrater_user.parent_id
+            created_by_field = calibrater_user.id
+        else:
+            user_id_field = calibrater_user.id
+            created_by_field = calibrater_user.id
+
         # Create a new technician.
         technician = Technician.create(
             name=calibrater_user.name,
             email=calibrater_user.email,
             phone=calibrater_user.phone or "0000000000",  # Placeholder if empty
-            user_id=new_user_id,
-            created_by=default_user.id,
+            user_id=user_id_field,
+            created_by=created_by_field,
             created_at=datetime.now(),
             updated_at=datetime.now(),
         )
@@ -150,7 +161,6 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
     except Exception as e:
         print(f"Error in creating or fetching technician: {e}")
         return None
-
 # --- Certificate Migration Function with Extended Export Data ---
 
 # If batch_mode is False (default) the certificate is inserted immediately.
