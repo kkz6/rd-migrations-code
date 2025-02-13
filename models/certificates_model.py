@@ -62,7 +62,7 @@ class Certificate(Model):
     cancelled_by_id = ForeignKeyField(DestinationUser, null=True, on_delete="SET NULL")
     installed_by_id = ForeignKeyField(Technician, null=False)
     installed_for_id = ForeignKeyField(Customer, null=True)
-    calibrated_by_id = ForeignKeyField(Technician, null=True)
+    calibrated_by_id = ForeignKeyField(Technician, null=False)
     vehicle_id = ForeignKeyField(Vehicle, null=True, on_delete="SET NULL")
     km_reading = IntegerField(null=False)
     speed_limit = IntegerField(null=False)
