@@ -19,7 +19,6 @@ from models.users_model import DestinationUser
 
 # Constants
 TECHNICIANS_MAPPING_FILE = "technicians_mapping.json"
-DEFAULT_USER_EMAIL = "linoj@resolute-dynamics.com"  # Replace with the known admin email
 EXCEL_FILE_NAME = "technician_migration_report.xlsx"
 BATCH_SIZE = 100  # Adjust batch size as needed
 
@@ -111,14 +110,6 @@ def clean_destination_table():
             dest_db.close()
 
 
-def get_default_user():
-    """Get the default user for the 'created_by' field."""
-    try:
-        return DestinationUser.get(DestinationUser.email == DEFAULT_USER_EMAIL)
-    except DoesNotExist:
-        raise Exception(f"Default user with email {DEFAULT_USER_EMAIL} not found.")
-
-
 def get_new_user_id_from_mapping(old_user_id, user_mappings):
     """
     Get the new user_id from the user_mappings.json file based on the old user_id.
@@ -174,19 +165,28 @@ def generate_excel_report(migrated_data, unmigrated_data):
         print(f"\nExport interrupted but partial report saved as {EXCEL_FILE_NAME}")
 
 
-def migrate_single_technician_data(record, new_user_id, default_user):
+def migrate_single_technician_data(record, new_user_id):
     """
     Migrate a single technician record to the destination database.
+    Uses the fetched destination user record to determine the proper user_id and created_by fields.
     Returns the new technician ID.
     """
     try:
+        dest_user = DestinationUser.get_by_id(new_user_id)
+        if dest_user.parent_id is not None:
+            user_id_field = dest_user.parent_id
+            created_by_field = dest_user.id
+        else:
+            user_id_field = dest_user.id
+            created_by_field = dest_user.id
+
         technician = Technician.create(
             id=record.id,
             name=record.technician_name,
             email=record.technician_email,
             phone=record.technician_phone,
-            user_id=new_user_id,
-            created_by=default_user.id,
+            user_id=user_id_field,
+            created_by=created_by_field,
             created_at=record.add_date,
             updated_at=record.add_date,
         )
@@ -194,15 +194,21 @@ def migrate_single_technician_data(record, new_user_id, default_user):
         return technician.id
     except IntegrityError as e:
         if "Duplicate entry" in str(e):
-            print(
-                f"Duplicate entry for {record.technician_email}. Attempting to update..."
-            )
+            print(f"Duplicate entry for {record.technician_email}. Attempting to update...")
+            dest_user = DestinationUser.get_by_id(new_user_id)
+            if dest_user.parent_id is not None:
+                user_id_field = dest_user.parent_id
+                created_by_field = dest_user.id
+            else:
+                user_id_field = dest_user.id
+                created_by_field = dest_user.id
+
             Technician.update(
                 {
                     "name": record.technician_name,
                     "phone": record.technician_phone,
-                    "user_id": new_user_id,
-                    "created_by": default_user.id,
+                    "user_id": user_id_field,
+                    "created_by": created_by_field,
                 }
             ).where(Technician.email == record.technician_email).execute()
             print(f"Updated existing technician: {record.technician_name}")
@@ -230,10 +236,6 @@ def migrate_technicians(automated=False):
         source_db.connect()
     if dest_db.is_closed():
         dest_db.connect()
-
-    # Get default "created_by" user
-    default_user = get_default_user()
-    print(f"Default 'created_by' user: {default_user.email} (ID: {default_user.id})")
 
     # Load mappings
     user_mappings = load_user_mappings()
@@ -266,13 +268,22 @@ def migrate_technicians(automated=False):
                     skipped_count += 1
                     continue
 
+                # Fetch destination user and determine fields based on parent_id
+                dest_user = DestinationUser.get_by_id(new_user_id)
+                if dest_user.parent_id is not None:
+                    user_id_field = dest_user.parent_id
+                    created_by_field = dest_user.id
+                else:
+                    user_id_field = dest_user.id
+                    created_by_field = dest_user.id
+
                 data = {
                     "id": record.id,
                     "name": record.technician_name,
                     "email": record.technician_email,
                     "phone": record.technician_phone,
-                    "user_id": new_user_id,
-                    "created_by": default_user.id,
+                    "user_id": user_id_field,
+                    "created_by": created_by_field,
                     "created_at": record.add_date,
                     "updated_at": record.add_date,
                 }
@@ -301,7 +312,7 @@ def migrate_technicians(automated=False):
                         print("Batch insert failed, falling back to individual insertion for this batch.")
                         for (r, d) in batch_list:
                             try:
-                                new_id = migrate_single_technician_data(r, d["user_id"], default_user)
+                                new_id = migrate_single_technician_data(r, new_user_id)
                                 technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                                 migrated_data.append({
                                     "id": new_id,
@@ -350,7 +361,7 @@ def migrate_technicians(automated=False):
             except IntegrityError:
                 for (r, d) in batch_list:
                     try:
-                        new_id = migrate_single_technician_data(r, d["user_id"], default_user)
+                        new_id = migrate_single_technician_data(r, new_user_id)
                         technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                         migrated_data.append({
                             "id": new_id,
@@ -405,7 +416,7 @@ def migrate_technicians(automated=False):
                 ).ask()
                 if proceed:
                     try:
-                        new_id = migrate_single_technician_data(record, new_user_id, default_user)
+                        new_id = migrate_single_technician_data(record, new_user_id)
                         technicians_mappings[new_id] = {"old_technician_id": record.id, "user_id": new_user_id}
                         save_technicians_mappings(technicians_mappings)
                         migrated_data.append({
@@ -479,7 +490,6 @@ def run_migration():
 
             record = TechnicianMaster.get_by_id(int(technician_id))
             user_mappings = load_user_mappings()
-            default_user = get_default_user()
             new_user_id = get_new_user_id_from_mapping(record.user_id, user_mappings)
 
             if not new_user_id:
@@ -488,7 +498,7 @@ def run_migration():
                 )
                 return
 
-            migrate_single_technician_data(record, new_user_id, default_user)
+            migrate_single_technician_data(record, new_user_id)
             print(f"Successfully migrated Technician: {record.technician_name}")
 
         else:
