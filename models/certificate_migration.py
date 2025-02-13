@@ -22,7 +22,7 @@ DEVICE_MAPPING_FILE = "devices_mappings.json"
 TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"  # Global constant for technician mapping file
 CERTIFICATES_MAPPING_FILE = "certificates_mappings.json"
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
-THREAD_COUNT = 5
+THREAD_COUNT = 10
 TECHNICIAN_MAPPING_LOCK = Lock()
 
 
