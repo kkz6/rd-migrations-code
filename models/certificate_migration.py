@@ -93,13 +93,10 @@ def list_unmigrated_certificates(migrated_ids):
 
 # --- Technician Mapping Function (using global constant for technician mapping file) ---
 
-def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, mappings):
+def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, default_user, mappings):
     """
     Get or create a technician based on calibrater_user_id or technician_id.
     Uses the global TECHNICIAN_MAPPING_FILE for saving mappings.
-    Instead of using a default user, when fetching the user from the user mapping:
-      - If the user record has a non-null parent_id, assign technician.user_id to parent_id and technician.created_by to the user's id.
-      - If parent_id is null, assign both technician.user_id and technician.created_by to the user's id.
     """
     try:
         technician_mappings = mappings["technician"]
@@ -111,7 +108,7 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
                     print(f"Technician already exists for old_technician_id {technician_id}. Using Technician ID {new_technician_id}.")
                     return Technician.get_by_id(int(new_technician_id))
 
-        # Use calibrater_user_id to find the new user mapping.
+        # Otherwise, use calibrater_user_id to find the new user mapping.
         user_mappings = mappings["user"]
         new_user_id = None
         for user_id, mapping in user_mappings.items():
@@ -122,28 +119,20 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
         if not new_user_id:
             raise Exception(f"No mapping found for calibrater_user_id {calibrater_user_id} in user mappings.")
 
-        # Retrieve the calibrater user record.
+        # Check if a technician already exists for the user.
         calibrater_user = DestinationUser.get_by_id(new_user_id)
         existing_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
         if existing_technician:
             print(f"Technician with email {calibrater_user.email} already exists. Using existing technician.")
             return existing_technician
 
-        # Determine technician's user_id and created_by based on calibrater_user.parent_id.
-        if calibrater_user.parent_id:
-            user_id_field = calibrater_user.parent_id
-            created_by_field = calibrater_user.id
-        else:
-            user_id_field = calibrater_user.id
-            created_by_field = calibrater_user.id
-
         # Create a new technician.
         technician = Technician.create(
             name=calibrater_user.name,
             email=calibrater_user.email,
             phone=calibrater_user.phone or "0000000000",  # Placeholder if empty
-            user_id=user_id_field,
-            created_by=created_by_field,
+            user_id=new_user_id,
+            created_by=default_user.id,
             created_at=datetime.now(),
             updated_at=datetime.now(),
         )
@@ -161,11 +150,12 @@ def get_or_create_technician_for_certificate(calibrater_user_id, technician_id, 
     except Exception as e:
         print(f"Error in creating or fetching technician: {e}")
         return None
+
 # --- Certificate Migration Function with Extended Export Data ---
 
 # If batch_mode is False (default) the certificate is inserted immediately.
 # If batch_mode is True, it only prepares certificate_data and export_data.
-def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False):
+def migrate_certificate(record, mappings, default_user, certificate_mappings, batch_mode=False):
     print(f"Starting migration for Certificate ID {record.id} (ECU: {record.ecu})")
     errors = []
 
@@ -174,7 +164,7 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
     if not device:
         errors.append("Device not found")
 
-    # Customer Mapping
+    # Customer Mapping (modified)
     if record.customer_id is None:
         customer = None
     else:
@@ -183,58 +173,32 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         if not customer:
             errors.append("Customer not found")
 
-    # --- Technician Mapping for Calibrated By and Installed By ---
-
-    # Calibrated By Mapping: use calibrater technician mapping if available, otherwise create one using calibrater user.
-    calibrated_by = None
-    if hasattr(record, "caliberater_technician_id") and record.caliberater_technician_id and record.caliberater_technician_id != 0:
-        found_calibrated_id = None
-        for new_tech_id, tech_mapping in mappings["technician"].items():
-            if tech_mapping.get("old_technician_id") == record.caliberater_technician_id:
-                found_calibrated_id = int(new_tech_id)
-                break
-        if found_calibrated_id:
-            calibrated_by = Technician.get_or_none(id=found_calibrated_id)
-        else:
-            calibrated_by = get_or_create_technician_for_certificate(
+    # Technician Mapping or Creation
+    technician = None
+    if record.installer_technician_id == 0:
+        try:
+            technician = get_or_create_technician_for_certificate(
                 calibrater_user_id=record.caliberater_user_id,
-                technician_id=record.caliberater_technician_id,
+                technician_id=record.installer_technician_id,
+                default_user=default_user,
                 mappings=mappings
             )
+        except Exception as e:
+            errors.append(f"Technician creation error: {e.__class__.__name__}: {str(e)}")
     else:
-        calibrated_by = get_or_create_technician_for_certificate(
-            calibrater_user_id=record.caliberater_user_id,
-            technician_id=0,
-            mappings=mappings
-        )
-
-    # Installed By Mapping: use installer technician mapping if available, otherwise create one using installer user.
-    installed_by = None
-    if hasattr(record, "installer_technician_id") and record.installer_technician_id and record.installer_technician_id != 0:
-        found_installed_id = None
+        found_new_tech_id = None
         for new_tech_id, tech_mapping in mappings["technician"].items():
             if tech_mapping.get("old_technician_id") == record.installer_technician_id:
-                found_installed_id = int(new_tech_id)
+                found_new_tech_id = int(new_tech_id)
                 break
-        if found_installed_id:
-            installed_by = Technician.get_or_none(id=found_installed_id)
+        if found_new_tech_id:
+            technician = Technician.get_or_none(id=found_new_tech_id)
         else:
-            installed_by = get_or_create_technician_for_certificate(
-                calibrater_user_id=record.installer_user_id,  # Using installer_user_id for installer mapping
-                technician_id=record.installer_technician_id,
-                mappings=mappings
-            )
-    else:
-        installed_by = get_or_create_technician_for_certificate(
-            calibrater_user_id=record.installer_user_id,
-            technician_id=0,
-            mappings=mappings
-        )
-
-    if not calibrated_by:
-        errors.append("Calibrated By technician not found or could not be created")
-    if not installed_by:
-        errors.append("Installed By technician not found or could not be created")
+            errors.append(f"Technician mapping for installer_technician_id {record.installer_technician_id} not found")
+    
+    if not technician:
+        if not any("Technician creation error" in err for err in errors):
+            errors.append("Technician not found or could not be created")
 
     # Vehicle Mapping or Creation using get_or_create for thread safety
     if record.vehicle_type:
@@ -252,6 +216,7 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
                 }
             )
         except IntegrityError as ie:
+            # In case of a race condition, try to retrieve the vehicle again.
             try:
                 vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
             except Exception as e:
@@ -300,11 +265,12 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         status = "renewed"
     else:
         status = "active"
+
     status = "nullified" if record.serialno is None else status
     status = "cancelled" if record.date_cancelation else status
     status = "blocked" if record.activstate == 0 else status
 
-    # Build Data Dictionaries with updated technician fields
+    # Build Data Dictionaries
     certificate_data = {
         "serial_number": record.serialno,
         "status": status,
@@ -314,8 +280,8 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "expiry_date": record.date_expiry,
         "cancellation_date": record.date_cancelation,
         "cancelled": (record.date_cancelation is not None),
-        "calibrated_by_id": calibrated_by.id if calibrated_by else None,
-        "installed_by_id": installed_by.id if installed_by else None,
+        "installed_by_id": technician.id if technician else None,
+        "installed_for_id": customer.id if customer else None,  # Allows null if customer is None
         "vehicle_id": vehicle.id if vehicle else None,
         "km_reading": record.kilometer or 0,
         "speed_limit": parse_speed(record.speed) if record.speed else 0,
@@ -332,17 +298,15 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "new_certificate_id": None,  # To be updated after insertion.
         "certificate_serial": certificate_data.get("serial_number"),
         "status": certificate_data.get("status"),
-        "old_calibrated_technician_id": record.caliberater_technician_id,
-        "new_calibrated_by_id": calibrated_by.id if calibrated_by else None,
-        "old_installer_technician_id": record.installer_technician_id,
-        "new_installed_by_id": installed_by.id if installed_by else None,
+        "old_technician_id": record.installer_technician_id,
+        "new_technician_id": technician.id if technician else None,
         "dealer_name": dealer_obj.name if dealer_obj else "N/A",
         "installation_date": certificate_data.get("installation_date"),
         "calibration_date": certificate_data.get("calibration_date"),
         "expiry_date": certificate_data.get("expiry_date"),
         "cancellation_date": certificate_data.get("cancellation_date"),
         "device_id": certificate_data.get("device_id"),
-        "customer_id": customer.id if customer else None,
+        "customer_id": certificate_data.get("installed_for_id"),
         "vehicle_id": certificate_data.get("vehicle_id")
     }
 
@@ -361,8 +325,7 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
                     "old_certificate_id": record.id,
                     "device_id": device.id,
                     "customer_id": customer.id if customer else None,
-                    "calibrated_by_id": calibrated_by.id if calibrated_by else None,
-                    "installed_by_id": installed_by.id if installed_by else None,
+                    "technician_id": technician.id if technician else None,
                     "vehicle_id": vehicle.id if vehicle else None,
                     "dealer_id": dealer_id_val,
                 }
