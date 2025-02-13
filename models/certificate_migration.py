@@ -298,7 +298,6 @@ def migrate_certificate(record, mappings, default_user, certificate_mappings, ba
         "print_count": record.print_count,
         "renewal_count": record.renewal_count,
         "description": record.description,
-        "country": "UAE",
         "dealer_id": dealer_id_val,
         "user_id": user_id_val
     }
