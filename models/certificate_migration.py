@@ -13,18 +13,24 @@ from models.customers_model import Customer
 from models.technicians_model import Technician
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
-from tqdm import *
+from tqdm import tqdm
+import traceback
 
 # Global Constants / Configurations
 CUSTOMER_MAPPING_FILE = "customer_mappings.json"
 USER_MAPPING_FILE = "user_mappings.json"
 DEVICE_MAPPING_FILE = "devices_mappings.json"
-TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"  # Global constant for technician mapping file
+TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"
 CERTIFICATES_MAPPING_FILE = "certificates_mappings.json"
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
 THREAD_COUNT = 10
 TECHNICIAN_MAPPING_LOCK = Lock()
 
+# Global caches to reduce repetitive DB queries
+DEVICE_CACHE = {}
+CUSTOMER_CACHE = {}
+USER_CACHE = {}
+TECHNICIAN_CACHE = {}  # key: (role, user_id, old_technician_id) to Technician instance
 
 def save_to_excel(migrated: List[dict], unmigrated: List[dict]):
     if not migrated and not unmigrated:
@@ -72,105 +78,106 @@ def parse_speed(speed_str):
         return int(match.group())
     return 0
 
+def preload_data():
+    global DEVICE_CACHE, CUSTOMER_CACHE, USER_CACHE
+    DEVICE_CACHE = {device.ecu_number: device for device in Device.select()}
+    CUSTOMER_CACHE = {customer.id: customer for customer in Customer.select()}
+    USER_CACHE = {user.id: user for user in DestinationUser.select()}
+
 def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_technician_id, installer_user_id, installer_technician_id, mappings):
     technician_mappings = mappings.get("technician", {})
-
-    # --- Calibration Technician Logic ---
     calibration_technician = None
+    installation_technician = None
+
+    # --- Calibration Technician Logic with Cache ---
     try:
         calib_tech_id = int(calibrater_technician_id) if calibrater_technician_id else 0
-        if calib_tech_id != 0:
-            with TECHNICIAN_MAPPING_LOCK:
-                # Iterate over a copy of the items to avoid concurrent modification issues.
-                for new_tech_id, tech_mapping in list(technician_mappings.items()):
-                    if tech_mapping.get("old_technician_id") == calib_tech_id:
-                        print(f"Calibration technician already exists for old_technician_id {calib_tech_id}. Using Technician ID {new_tech_id}.")
-                        calibration_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-        if not calibration_technician:
-            user_mappings = mappings.get("user", {})
-            new_user_id = None
-            for user_id, user_map in user_mappings.items():
-                if user_map.get("old_user_id") == int(calibrater_user_id):
-                    new_user_id = int(user_id)
-                    break
-            if not new_user_id:
-                raise Exception(f"No mapping found for calibrater_user_id {calibrater_user_id} in user mappings.")
-            calibrater_user = DestinationUser.get_by_id(new_user_id)
-            calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
+        cache_key = ("calibration", calibrater_user_id, calib_tech_id)
+        if cache_key in TECHNICIAN_CACHE:
+            calibration_technician = TECHNICIAN_CACHE[cache_key]
+        else:
+            if calib_tech_id != 0:
+                with TECHNICIAN_MAPPING_LOCK:
+                    for new_tech_id, tech_mapping in technician_mappings.items():
+                        if tech_mapping.get("old_technician_id") == calib_tech_id:
+                            calibration_technician = Technician.get_by_id(int(new_tech_id))
+                            break
             if not calibration_technician:
-                if calibrater_user.parent_id:
-                    tech_user_id = calibrater_user.parent_id
-                    tech_created_by = calibrater_user.id
-                else:
-                    tech_user_id = calibrater_user.id
-                    tech_created_by = calibrater_user.id
-
-                calibration_technician = Technician.create(
-                    name=calibrater_user.name,
-                    email=calibrater_user.email,
-                    phone=calibrater_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=tech_created_by,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            with TECHNICIAN_MAPPING_LOCK:
-                technician_mappings[str(calibration_technician.id)] = {
-                    "old_technician_id": calib_tech_id,
-                    "user_id": new_user_id,
-                }
-                save_mappings(TECHNICIAN_MAPPING_FILE, technician_mappings)
+                new_user_id = None
+                for user_id, user_map in mappings.get("user", {}).items():
+                    if user_map.get("old_user_id") == int(calibrater_user_id):
+                        new_user_id = int(user_id)
+                        break
+                if not new_user_id:
+                    raise Exception(f"No mapping found for calibrater_user_id {calibrater_user_id} in user mappings.")
+                calibrater_user = USER_CACHE.get(new_user_id) or DestinationUser.get_by_id(new_user_id)
+                calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
+                if not calibration_technician:
+                    tech_user_id = calibrater_user.parent_id if calibrater_user.parent_id else calibrater_user.id
+                    calibration_technician = Technician.create(
+                        name=calibrater_user.name,
+                        email=calibrater_user.email,
+                        phone=calibrater_user.phone or "0000000000",
+                        user_id=tech_user_id,
+                        created_by=calibrater_user.id,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
+                    )
+                with TECHNICIAN_MAPPING_LOCK:
+                    technician_mappings[str(calibration_technician.id)] = {
+                        "old_technician_id": calib_tech_id,
+                        "user_id": new_user_id,
+                    }
+                    save_mappings(TECHNICIAN_MAPPING_FILE, technician_mappings)
+            TECHNICIAN_CACHE[cache_key] = calibration_technician
     except Exception as e:
         print(f"Error in creating or fetching calibration technician: {e}")
+        print(traceback.format_exc())
 
-    # --- Installation Technician Logic ---
-    installation_technician = None
+    # --- Installation Technician Logic with Cache ---
     try:
         inst_tech_id = int(installer_technician_id) if installer_technician_id else 0
-        if inst_tech_id != 0:
-            with TECHNICIAN_MAPPING_LOCK:
-                for new_tech_id, tech_mapping in list(technician_mappings.items()):
-                    if tech_mapping.get("old_technician_id") == inst_tech_id:
-                        print(f"Installation technician already exists for old_technician_id {inst_tech_id}. Using Technician ID {new_tech_id}.")
-                        installation_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-        if not installation_technician:
-            user_mappings = mappings.get("user", {})
-            new_user_id = None
-            for user_id, user_map in user_mappings.items():
-                if user_map.get("old_user_id") == int(installer_user_id):
-                    new_user_id = int(user_id)
-                    break
-            if not new_user_id:
-                raise Exception(f"No mapping found for installer_user_id {installer_user_id} in user mappings.")
-            installer_user = DestinationUser.get_by_id(new_user_id)
-            installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
+        cache_key = ("installation", installer_user_id, inst_tech_id)
+        if cache_key in TECHNICIAN_CACHE:
+            installation_technician = TECHNICIAN_CACHE[cache_key]
+        else:
+            if inst_tech_id != 0:
+                with TECHNICIAN_MAPPING_LOCK:
+                    for new_tech_id, tech_mapping in technician_mappings.items():
+                        if tech_mapping.get("old_technician_id") == inst_tech_id:
+                            installation_technician = Technician.get_by_id(int(new_tech_id))
+                            break
             if not installation_technician:
-                if installer_user.parent_id:
-                    tech_user_id = installer_user.parent_id
-                    tech_created_by = installer_user.id
-                else:
-                    tech_user_id = installer_user.id
-                    tech_created_by = installer_user.id
-
-                installation_technician = Technician.create(
-                    name=installer_user.name,
-                    email=installer_user.email,
-                    phone=installer_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=tech_created_by,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            with TECHNICIAN_MAPPING_LOCK:
-                technician_mappings[str(installation_technician.id)] = {
-                    "old_technician_id": inst_tech_id,
-                    "user_id": new_user_id,
-                }
-                save_mappings(TECHNICIAN_MAPPING_FILE, technician_mappings)
+                new_user_id = None
+                for user_id, user_map in mappings.get("user", {}).items():
+                    if user_map.get("old_user_id") == int(installer_user_id):
+                        new_user_id = int(user_id)
+                        break
+                if not new_user_id:
+                    raise Exception(f"No mapping found for installer_user_id {installer_user_id} in user mappings.")
+                installer_user = USER_CACHE.get(new_user_id) or DestinationUser.get_by_id(new_user_id)
+                installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
+                if not installation_technician:
+                    tech_user_id = installer_user.parent_id if installer_user.parent_id else installer_user.id
+                    installation_technician = Technician.create(
+                        name=installer_user.name,
+                        email=installer_user.email,
+                        phone=installer_user.phone or "0000000000",
+                        user_id=tech_user_id,
+                        created_by=installer_user.id,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
+                    )
+                with TECHNICIAN_MAPPING_LOCK:
+                    technician_mappings[str(installation_technician.id)] = {
+                        "old_technician_id": inst_tech_id,
+                        "user_id": new_user_id,
+                    }
+                    save_mappings(TECHNICIAN_MAPPING_FILE, technician_mappings)
+            TECHNICIAN_CACHE[cache_key] = installation_technician
     except Exception as e:
         print(f"Error in creating or fetching installation technician: {e}")
+        print(traceback.format_exc())
 
     return calibration_technician, installation_technician
 
@@ -183,20 +190,26 @@ def list_unmigrated_certificates(migrated_ids):
         return CertificateRecord.select()
 
 def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False):
-    # Removed verbose "Starting migration for Certificate ID ..." print
     errors = []
-    device = Device.get_or_none(Device.ecu_number == record.ecu)
+    # Device Mapping using preloaded cache
+    device = DEVICE_CACHE.get(record.ecu)
     if not device:
         errors.append("Device not found")
-
-    if record.customer_id is None:
+    
+    # Customer Mapping using preloaded cache
+    try:
+        if record.customer_id is None:
+            customer = None
+        else:
+            mapped_customer_id = mappings.get("customer", {}).get(str(record.customer_id))
+            customer = CUSTOMER_CACHE.get(mapped_customer_id) or Customer.get_or_none(Customer.id == mapped_customer_id) if mapped_customer_id else None
+            if not customer:
+                errors.append("Customer not found")
+    except Exception as e:
+        errors.append(f"Error fetching customer: {e.__class__.__name__}: {str(e)}")
         customer = None
-    else:
-        mapped_customer_id = mappings.get("customer", {}).get(str(record.customer_id))
-        customer = Customer.get_or_none(Customer.id == mapped_customer_id) if mapped_customer_id else None
-        if not customer:
-            errors.append("Customer not found")
 
+    # Technician Mapping (Calibration & Installation)
     try:
         calibration_technician, installation_technician = get_or_create_technician_for_certificate(
             calibrater_user_id=record.caliberater_user_id,
@@ -206,66 +219,85 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
             mappings=mappings
         )
     except Exception as e:
-        errors.append(f"Technician creation error: {e.__class__.__name__}: {str(e)}")
-    
+        errors.append(f"Technician creation error: {e.__class__.__name__}: {str(e)}\n{traceback.format_exc()}")
+        calibration_technician = None
+        installation_technician = None
+
     if not calibration_technician:
         errors.append("Calibration technician not found or could not be created")
     if not installation_technician:
         errors.append("Installation technician not found or could not be created")
 
-    if record.vehicle_type:
-        vehicle_brand_model = record.vehicle_type.split(" ", 1)
-        brand = vehicle_brand_model[0]
-        model = vehicle_brand_model[1] if len(vehicle_brand_model) > 1 else brand
-        try:
-            vehicle, created = Vehicle.get_or_create(
-                vehicle_chassis_no=record.vehicle_chassis,
-                defaults={
-                    "brand": brand,
-                    "model": model,
-                    "vehicle_no": record.vehicle_registration,
-                    "new_registration": False
-                }
-            )
-        except IntegrityError as ie:
+    # Vehicle Mapping or Creation
+    try:
+        if record.vehicle_type:
+            vehicle_brand_model = record.vehicle_type.split(" ", 1)
+            brand = vehicle_brand_model[0]
+            model = vehicle_brand_model[1] if len(vehicle_brand_model) > 1 else brand
             try:
-                vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
-            except Exception as e:
-                errors.append(f"Vehicle creation failed: {e.__class__.__name__}: {str(e)}")
-    else:
-        vehicle = Vehicle.get_or_none(vehicle_chassis_no=record.vehicle_chassis)
-
-    dealer_errors = []
-    dealer_obj = None
-    old_dealer_id = getattr(record, 'dealer_id', None)
-    if not old_dealer_id:
-        dealer_errors.append("No dealer id found in record")
-    else:
-        new_dealer_id = None
-        for key, user_map in mappings["user"].items():
-            if user_map.get("dealer_id") == old_dealer_id:
-                new_dealer_id = int(key)
-                break
-        if not new_dealer_id:
-            dealer_errors.append(f"No matching dealer mapping found for dealer id {old_dealer_id}")
+                vehicle, created = Vehicle.get_or_create(
+                    vehicle_chassis_no=record.vehicle_chassis,
+                    defaults={
+                        "brand": brand,
+                        "model": model,
+                        "vehicle_no": record.vehicle_registration,
+                        "new_registration": False
+                    }
+                )
+            except IntegrityError as ie:
+                try:
+                    vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
+                except Exception as e:
+                    errors.append(f"Vehicle creation failed: {e.__class__.__name__}: {str(e)}")
+                    vehicle = None
         else:
-            try:
-                dealer_obj = DestinationUser.get_by_id(new_dealer_id)
-                if dealer_obj.parent_id:
-                    dealer_id_val = dealer_obj.parent_id
-                    user_id_val = dealer_obj.id
-                else:
-                    dealer_id_val = dealer_obj.id
-                    user_id_val = dealer_obj.id
-            except DoesNotExist as dne:
-                dealer_errors.append(f"DoesNotExist: {str(dne)}")
-    if dealer_errors:
-        errors.extend(dealer_errors)
-        print(f"Skipping Certificate ID {record.id} due to dealer mapping errors: {dealer_errors}")
-        return None, errors
+            vehicle = Vehicle.get_or_none(vehicle_chassis_no=record.vehicle_chassis)
+    except Exception as e:
+        errors.append(f"Error processing vehicle: {e.__class__.__name__}: {str(e)}")
+        vehicle = None
 
-    max_renewal = CertificateRecord.select(fn.MAX(CertificateRecord.renewal_count))\
-                    .where(CertificateRecord.ecu == record.ecu).scalar() or 0
+    # Dealer Mapping
+    try:
+        dealer_errors = []
+        dealer_obj = None
+        old_dealer_id = getattr(record, 'dealer_id', None)
+        if not old_dealer_id:
+            dealer_errors.append("No dealer id found in record")
+        else:
+            new_dealer_id = None
+            for key, user_map in mappings["user"].items():
+                if user_map.get("dealer_id") == old_dealer_id:
+                    new_dealer_id = int(key)
+                    break
+            if not new_dealer_id:
+                dealer_errors.append(f"No matching dealer mapping found for dealer id {old_dealer_id}")
+            else:
+                try:
+                    dealer_obj = USER_CACHE.get(new_dealer_id) or DestinationUser.get_by_id(new_dealer_id)
+                    if dealer_obj.parent_id:
+                        dealer_id_val = dealer_obj.parent_id
+                        user_id_val = dealer_obj.id
+                    else:
+                        dealer_id_val = dealer_obj.id
+                        user_id_val = dealer_obj.id
+                except DoesNotExist as dne:
+                    dealer_errors.append(f"DoesNotExist: {str(dne)}")
+        if dealer_errors:
+            errors.extend(dealer_errors)
+            # Instead of printing errors that disrupt the progress bar,
+            # return the error information.
+            return None, errors
+    except Exception as e:
+        errors.append(f"Dealer mapping error: {e.__class__.__name__}: {str(e)}")
+
+    # Determine certificate status
+    try:
+        max_renewal = CertificateRecord.select(fn.MAX(CertificateRecord.renewal_count))\
+                        .where(CertificateRecord.ecu == record.ecu).scalar() or 0
+    except Exception as e:
+        errors.append(f"Error fetching max renewal: {e.__class__.__name__}: {str(e)}")
+        max_renewal = 0
+
     if record.renewal_count < max_renewal:
         status = "renewed"
     else:
@@ -277,7 +309,7 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
     certificate_data = {
         "serial_number": record.serialno,
         "status": status,
-        "device_id": device.id,
+        "device_id": device.id if device else None,
         "installation_date": record.date_installation,
         "calibration_date": record.date_calibrate,
         "expiry_date": record.date_expiry,
@@ -292,13 +324,13 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "print_count": record.print_count,
         "renewal_count": record.renewal_count,
         "description": record.description,
-        "dealer_id": dealer_id_val,
-        "user_id": user_id_val
+        "dealer_id": dealer_id_val if 'dealer_id_val' in locals() else None,
+        "user_id": user_id_val if 'user_id_val' in locals() else None
     }
     export_data = {
         "ecu": record.ecu,
         "old_certificate_id": record.id,
-        "new_certificate_id": None,  # To be updated after insertion.
+        "new_certificate_id": None,  # Will be updated after insertion.
         "certificate_serial": certificate_data.get("serial_number"),
         "status": certificate_data.get("status"),
         "old_calibration_technician_id": record.caliberater_technician_id,
@@ -325,37 +357,42 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
             if str(record.id) not in certificate_mappings:
                 certificate_mappings[str(record.id)] = {
                     "old_certificate_id": record.id,
-                    "device_id": device.id,
+                    "device_id": device.id if device else None,
                     "customer_id": customer.id if customer else None,
                     "technician_id": installation_technician.id if installation_technician else None,
                     "vehicle_id": vehicle.id if vehicle else None,
-                    "dealer_id": dealer_id_val,
+                    "dealer_id": dealer_id_val if 'dealer_id_val' in locals() else None,
                 }
             return export_data, None
         except Exception as e:
-            errors.append(f"{e.__class__.__name__}: {str(e)}")
-            print(f"Error migrating Certificate ID {record.id}: {errors}")
+            errors.append(f"Certificate Insertion Error: {e.__class__.__name__}: {str(e)}\n{traceback.format_exc()}")
             return None, errors
     else:
-        # In batch mode, we return the prepared data.
+        # In batch mode, return the prepared data for bulk insert.
         return (certificate_data, export_data), None
 
-def worker_batch(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar):
+def worker_batch(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar, stats, stats_lock):
     while not queue.empty():
         record = queue.get()
         try:
             result, errors = migrate_certificate(record, mappings, certificate_mappings, batch_mode=True)
             if result:
-                batch_results.append(result)  # result is (certificate_data, export_data)
+                batch_results.append(result)
             elif errors:
                 unmigrated.append({"ecu": record.ecu, "errors": ", ".join(errors)})
+                with stats_lock:
+                    stats["failed"] += 1
+                    stats["last_failed"] = record.ecu
+                progress_bar.set_postfix(failed=stats["failed"], last_failed=stats["last_failed"])
         except Exception as e:
             unmigrated.append({"ecu": record.ecu, "errors": f"{e.__class__.__name__}: {str(e)}"})
+            with stats_lock:
+                stats["failed"] += 1
+                stats["last_failed"] = record.ecu
+            progress_bar.set_postfix(failed=stats["failed"], last_failed=stats["last_failed"])
         finally:
             progress_bar.update(1)
             queue.task_done()
-
-# --- Migration Modes ---
 
 def run_one_by_one(mappings, certificate_mappings):
     print("Starting One-by-One Migration")
@@ -405,6 +442,7 @@ def run_one_by_one(mappings, certificate_mappings):
 
 def run_fully_automated(mappings, certificate_mappings):
     print("Starting Fully Automated Migration (Batch Insert Mode)")
+    preload_data()  # Preload devices, customers, and users into memory
     batch_results = []  # Holds tuples: (certificate_data, export_data)
     unmigrated = []
     records = list_unmigrated_certificates(list(certificate_mappings.keys()))
@@ -415,12 +453,18 @@ def run_fully_automated(mappings, certificate_mappings):
     for record in records:
         queue.put(record)
 
-    # Initialize progress bar with total count.
+    # Initialize progress bar with additional status info
     progress_bar = tqdm(total=total_records, desc="Migrating Certificates", ncols=100, colour="green")
+    # Shared dictionary to track failed count and the last failed certificate
+    stats = {"failed": 0, "last_failed": "N/A"}
+    stats_lock = Lock()
     
     threads = []
     for _ in range(THREAD_COUNT):
-        thread = Thread(target=worker_batch, args=(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar))
+        thread = Thread(
+            target=worker_batch,
+            args=(queue, batch_results, unmigrated, mappings, certificate_mappings, progress_bar, stats, stats_lock)
+        )
         thread.start()
         threads.append(thread)
 
@@ -442,17 +486,14 @@ def run_fully_automated(mappings, certificate_mappings):
             new_ids = [None] * len(certificate_data_list)
         for idx, new_cert_id in enumerate(new_ids):
             export_data_list[idx]["new_certificate_id"] = new_cert_id
-
-            # Update the corresponding Vehicle record with the new certificate id.
             vehicle_id = export_data_list[idx].get("vehicle_id")
             if vehicle_id:
                 Vehicle.update({Vehicle.certificate_id: new_cert_id}).where(Vehicle.id == vehicle_id).execute()
-
             old_cert_id = export_data_list[idx]["old_certificate_id"]
             if str(old_cert_id) not in certificate_mappings:
                 certificate_mappings[str(old_cert_id)] = {
                     "old_certificate_id": old_cert_id,
-                    "dealer_id": export_data_list[idx].get("device_id"),  # Adjust mapping info as needed.
+                    "dealer_id": export_data_list[idx].get("device_id"),
                 }
     else:
         export_data_list = []
@@ -460,7 +501,6 @@ def run_fully_automated(mappings, certificate_mappings):
     save_mappings(CERTIFICATES_MAPPING_FILE, certificate_mappings)
     save_to_excel(export_data_list, unmigrated)
     
-# Main Function
 def run_migration():
     print("Loading Mappings")
     mappings = {
@@ -488,3 +528,6 @@ def run_migration():
             print("Invalid choice. Exiting...")
     except KeyboardInterrupt:
         print("\nMigration process interrupted by user. Exiting...")
+
+if __name__ == "__main__":
+    run_migration()
