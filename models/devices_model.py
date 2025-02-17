@@ -301,7 +301,6 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, new_dealer_id, 
     migrated_data = []
     unmigrated_data = []
     batch_device_records = []
-    batch_device_mappings = []
     fail_count = 0
 
     total_batches = (total_devices + BATCH_SIZE - 1) // BATCH_SIZE
@@ -334,10 +333,6 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, new_dealer_id, 
                                 "updated_at": ecu_record.add_date_timestamp,
                             }
                             batch_device_records.append(device_record)
-                            batch_device_mappings.append({
-                                "ecu_number": ecu_record.ecu,
-                                "dealer_id": new_dealer_id,
-                            })
                             break
                     if not device_mapped:
                         fail_count += 1
@@ -371,6 +366,11 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, new_dealer_id, 
                                 "user_id": default_user.id,
                                 "created_at": device.created_at,
                             })
+                            # Store the mapping using the new device ID as the key
+                            device_mappings[str(device.id)] = {
+                                "ecu_number": device.ecu_number,
+                                "dealer_id": new_dealer_id,
+                            }
                         except DoesNotExist:
                             fail_count += 1
                             unmigrated_data.append({
@@ -378,11 +378,8 @@ def migrate_devices_in_batches(unmigrated_devices, default_user, new_dealer_id, 
                                 "dealer_id": record["dealer_id"],
                                 "reason": "Device not found after insertion",
                             })
-                    for mapping in batch_device_mappings:
-                        device_mappings[mapping["ecu_number"]] = mapping
                     save_device_mappings(device_mappings)
                     batch_device_records.clear()
-                    batch_device_mappings.clear()
                 except Exception as e:
                     for record in batch_device_records:
                         fail_count += 1
