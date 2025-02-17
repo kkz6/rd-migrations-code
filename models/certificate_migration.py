@@ -19,7 +19,7 @@ import traceback
 # Global Constants / Configurations
 CUSTOMER_MAPPING_FILE = "customer_mappings.json"
 USER_MAPPING_FILE = "user_mappings.json"
-DEVICE_MAPPING_FILE = "devices_mappings.json"
+DEVICE_MAPPING_FILE = "device_mappings.json"
 TECHNICIAN_MAPPING_FILE = "technicians_mapping.json"
 CERTIFICATES_MAPPING_FILE = "certificates_mappings.json"
 EXCEL_FILE_NAME = "certificate_migration_report.xlsx"
