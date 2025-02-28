@@ -13,6 +13,7 @@ from models.customers_model import Customer
 from models.technicians_model import Technician
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
+from pytz import timezone, UTC
 from tqdm import tqdm
 import traceback
 
@@ -30,6 +31,20 @@ DEVICE_CACHE = {}
 CUSTOMER_CACHE = {}
 USER_CACHE = {}
 TECHNICIAN_CACHE = {}  # key: (role, user_id, old_technician_id) to Technician instance
+
+def convert_uae_to_utc(uae_time_str):
+    """Convert a datetime string from UAE timezone to UTC."""
+    if not uae_time_str:
+        return None
+    try:
+        uae_tz = timezone("Asia/Dubai")  # UAE follows Dubai timezone
+        dt_uae = datetime.strptime(uae_time_str, "%Y-%m-%d %H:%M:%S")  # Adjust format as needed
+        dt_uae = uae_tz.localize(dt_uae)  # Localize to UAE timezone
+        dt_utc = dt_uae.astimezone(UTC)  # Convert to UTC
+        return dt_utc
+    except Exception as e:
+        print(f"Time conversion error for {uae_time_str}: {e}")
+        return None
 
 def save_to_excel(migrated: List[dict], unmigrated: List[dict]):
     if not migrated and not unmigrated:
@@ -523,10 +538,10 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "serial_number": record.serialno,
         "status": status,
         "device_id": device_id,
-        "installation_date": record.date_installation,
-        "calibration_date": record.date_calibrate,
-        "expiry_date": record.date_expiry,
-        "cancellation_date": record.date_cancelation,
+        "installation_date": convert_uae_to_utc(record.date_installation),
+        "calibration_date": convert_uae_to_utc(record.date_calibrate),
+        "expiry_date": convert_uae_to_utc(record.date_expiry),
+        "cancellation_date": convert_uae_to_utc(record.date_cancelation),
         "cancelled": (record.date_cancelation is not None),
         "calibrated_by_id": calibration_technician.id,
         "installed_by_id": installation_technician.id,
