@@ -163,6 +163,7 @@ class Device(Model):
     device_variant_id = ForeignKeyField(DeviceVariant, backref="devices", on_delete="CASCADE")
     remarks = CharField(null=True)
     lock = IntegerField(default=0)
+    blocked = IntegerField(default=0)
     dealer_id = BigIntegerField(null=True)
     user_id = BigIntegerField()
     country_id = IntegerField()
