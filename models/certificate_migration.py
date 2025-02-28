@@ -533,6 +533,13 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
     status = "cancelled" if record.date_cancelation else status
     status = "blocked" if record.activstate == 0 else status
 
+    if record.activstate == 0 and record.date_cancelation is None and device_id:
+        try:
+            Device.update(blocked=1).where(Device.id == device_id).execute()
+            print(f"Updated Device ID {device_id}: Blocked = 1 due to certificate activstate=0 and no cancellation date.")
+        except Exception as e:
+            errors.append(f"Failed to update device block status: {e.__class__.__name__}: {str(e)}")
+
     # Build the certificate data dictionary
     certificate_data = {
         "serial_number": record.serialno,
