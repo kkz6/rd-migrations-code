@@ -562,7 +562,9 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "renewal_count": record.renewal_count,
         "description": record.description,
         "dealer_id": dealer_id_val if 'dealer_id_val' in locals() else None,
-        "user_id": user_id_val if 'user_id_val' in locals() else None
+        "user_id": user_id_val if 'user_id_val' in locals() else None,
+        "created_at": convert_uae_to_utc(record.date_calibrate),
+        "updated_at": convert_uae_to_utc(record.date_calibrate),
     }
 
     export_data = {

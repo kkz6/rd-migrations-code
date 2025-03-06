@@ -78,6 +78,8 @@ class Certificate(Model):
     cancellation_requested_by_id = ForeignKeyField(
         DestinationUser, null=True, on_delete="SET NULL"
     )
+    created_at = DateTimeField(null=False)
+    updated_at = DateTimeField(null=False)
 
     class Meta:
         database = dest_db
