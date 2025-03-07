@@ -32,18 +32,26 @@ CUSTOMER_CACHE = {}
 USER_CACHE = {}
 TECHNICIAN_CACHE = {}  # key: (role, user_id, old_technician_id) to Technician instance
 
-def convert_uae_to_utc(uae_time_str):
-    """Convert a datetime string from UAE timezone to UTC."""
-    if not uae_time_str:
+def convert_uae_to_utc(uae_dt):
+    """Convert a datetime object from UAE timezone to UTC.
+    
+    If the datetime object is naive (i.e. no timezone info),
+    it is assumed to be in the UAE (Asia/Dubai) timezone.
+    """
+    if not uae_dt:
         return None
     try:
         uae_tz = timezone("Asia/Dubai")  # UAE follows Dubai timezone
-        dt_uae = datetime.strptime(uae_time_str, "%Y-%m-%d %H:%M:%S")  # Adjust format as needed
-        dt_uae = uae_tz.localize(dt_uae)  # Localize to UAE timezone
-        dt_utc = dt_uae.astimezone(UTC)  # Convert to UTC
+        
+        # If datetime is naive, localize it to UAE timezone.
+        if uae_dt.tzinfo is None:
+            uae_dt = uae_tz.localize(uae_dt)
+        
+        # Convert to UTC
+        dt_utc = uae_dt.astimezone(UTC)
         return dt_utc
     except Exception as e:
-        print(f"Time conversion error for {uae_time_str}: {e}")
+        print(f"Time conversion error for {uae_dt}: {e}")
         return None
 
 def save_to_excel(migrated: List[dict], unmigrated: List[dict]):
@@ -563,8 +571,8 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "description": record.description,
         "dealer_id": dealer_id_val if 'dealer_id_val' in locals() else None,
         "user_id": user_id_val if 'user_id_val' in locals() else None,
-        "created_at": convert_uae_to_utc(record.date_calibrate),
-        "updated_at": convert_uae_to_utc(record.date_calibrate),
+        "created_at": record.date_calibrate,
+        "updated_at": record.date_calibrate,
     }
 
     export_data = {
@@ -578,10 +586,26 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "old_installation_technician_id": record.installer_technician_id,
         "new_installation_technician_id": installation_technician.id,
         "dealer_name": dealer_obj.name if dealer_obj else "N/A",
-        "installation_date": certificate_data.get("installation_date"),
-        "calibration_date": certificate_data.get("calibration_date"),
-        "expiry_date": certificate_data.get("expiry_date"),
-        "cancellation_date": certificate_data.get("cancellation_date"),
+        "installation_date": (
+            certificate_data.get("installation_date").isoformat() 
+            if isinstance(certificate_data.get("installation_date"), datetime) 
+            else certificate_data.get("installation_date")
+        ),
+        "calibration_date": (
+            certificate_data.get("calibration_date").isoformat() 
+            if isinstance(certificate_data.get("calibration_date"), datetime) 
+            else certificate_data.get("calibration_date")
+        ),
+        "expiry_date": (
+            certificate_data.get("expiry_date").isoformat() 
+            if isinstance(certificate_data.get("expiry_date"), datetime) 
+            else certificate_data.get("expiry_date")
+        ),
+        "cancellation_date": (
+            certificate_data.get("cancellation_date").isoformat() 
+            if isinstance(certificate_data.get("cancellation_date"), datetime) 
+            else certificate_data.get("cancellation_date")
+        ),
         "device_id": certificate_data.get("device_id"),
         "customer_id": certificate_data.get("installed_for_id"),
         "vehicle_id": certificate_data.get("vehicle_id")
