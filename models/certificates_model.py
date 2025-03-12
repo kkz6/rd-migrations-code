@@ -61,8 +61,10 @@ class Certificate(Model):
     previous_certificate_id = ForeignKeyField("self", null=True, on_delete="SET NULL")
     cancelled_by_id = ForeignKeyField(DestinationUser, null=True, on_delete="SET NULL")
     installed_by_id = ForeignKeyField(Technician, null=False)
+    installed_by_user_id = ForeignKeyField(DestinationUser, null=False)
     installed_for_id = ForeignKeyField(Customer, null=True)
     calibrated_by_id = ForeignKeyField(Technician, null=False)
+    calibrated_by_user_id = ForeignKeyField(DestinationUser, null=False)
     vehicle_id = ForeignKeyField(Vehicle, null=True, on_delete="SET NULL")
     km_reading = IntegerField(null=False)
     speed_limit = IntegerField(null=False)
@@ -76,6 +78,8 @@ class Certificate(Model):
     cancellation_requested_by_id = ForeignKeyField(
         DestinationUser, null=True, on_delete="SET NULL"
     )
+    created_at = DateTimeField(null=False)
+    updated_at = DateTimeField(null=False)
 
     class Meta:
         database = dest_db
