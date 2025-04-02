@@ -171,72 +171,81 @@ def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_tech
     if calib_cache_key in TECHNICIAN_CACHE:
         calibration_technician = TECHNICIAN_CACHE[calib_cache_key]['tech']
     else:
-        # (a) If a technician ID was provided, try to find the mapped technician.
-        if calibrater_technician_id is not None:
-            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
-                try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(calibrater_technician_id):
-                        calibration_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-                except Exception:
-                    continue
-        # (b) If not found (or no technician ID provided), try to get an existing technician by email.
-        if not calibration_technician:
-            calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
-            # (c) If still not found, create a new technician record.
-            if not calibration_technician:
-                tech_user_id = calibrater_user.parent_id if calibrater_user.parent_id else calibrater_user.id
-                calibration_technician = Technician.create(
-                    name=calibrater_user.name,
-                    email=calibrater_user.email,
-                    phone=calibrater_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=calibrater_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            # Update technician mapping immediately.
+        # First try to find existing technician by email
+        calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
+        
+        if calibration_technician:
+            # Update cache with found technician
+            TECHNICIAN_CACHE[calib_cache_key] = {
+                'tech': calibration_technician,
+                'user': calibrater_user
+            }
+        else:
+            # Create new technician with additional fields
+            tech_user_id = calibrater_user.parent_id if calibrater_user.parent_id else calibrater_user.id
+            calibration_technician = Technician.create(
+                name=calibrater_user.name,
+                email=calibrater_user.email,
+                phone=calibrater_user.phone or "0000000000",
+                user_id=tech_user_id,
+                calibrator_id=calibrater_user.id,  # Set calibrator_id to user's ID
+                dealer_id=calibrater_user.parent_id,  # Set dealer_id to user's parent_id
+                created_by=calibrater_user.id,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+            # Update cache with new technician
+            TECHNICIAN_CACHE[calib_cache_key] = {
+                'tech': calibration_technician,
+                'user': calibrater_user
+            }
+            # Update technician mapping
             with TECHNICIAN_MAPPING_LOCK:
                 mappings["technician"][str(calibration_technician.id)] = {
                     "old_technician_id": calibrater_technician_id if calibrater_technician_id else 0,
                     "user_id": new_calibrater_user_id,
                 }
                 save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
-        # Cache the result.
-        TECHNICIAN_CACHE[calib_cache_key] = {'tech': calibration_technician, 'user': calibrater_user}
 
     # -- Installation Technician --
     if install_cache_key in TECHNICIAN_CACHE:
         installation_technician = TECHNICIAN_CACHE[install_cache_key]['tech']
     else:
-        if installer_technician_id is not None:
-            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
-                try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(installer_technician_id):
-                        installation_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-                except Exception:
-                    continue
-        if not installation_technician:
-            installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
-            if not installation_technician:
-                tech_user_id = installer_user.parent_id if installer_user.parent_id else installer_user.id
-                installation_technician = Technician.create(
-                    name=installer_user.name,
-                    email=installer_user.email,
-                    phone=installer_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=installer_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
+        # First try to find existing technician by email
+        installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
+        
+        if installation_technician:
+            # Update cache with found technician
+            TECHNICIAN_CACHE[install_cache_key] = {
+                'tech': installation_technician,
+                'user': installer_user
+            }
+        else:
+            # Create new technician with additional fields
+            tech_user_id = installer_user.parent_id if installer_user.parent_id else installer_user.id
+            installation_technician = Technician.create(
+                name=installer_user.name,
+                email=installer_user.email,
+                phone=installer_user.phone or "0000000000",
+                user_id=tech_user_id,
+                calibrator_id=installer_user.id,  # Set calibrator_id to user's ID
+                dealer_id=installer_user.parent_id,  # Set dealer_id to user's parent_id
+                created_by=installer_user.id,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+            # Update cache with new technician
+            TECHNICIAN_CACHE[install_cache_key] = {
+                'tech': installation_technician,
+                'user': installer_user
+            }
+            # Update technician mapping
             with TECHNICIAN_MAPPING_LOCK:
                 mappings["technician"][str(installation_technician.id)] = {
                     "old_technician_id": installer_technician_id if installer_technician_id else 0,
                     "user_id": new_installer_user_id,
                 }
                 save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
-        TECHNICIAN_CACHE[install_cache_key] = {'tech': installation_technician, 'user': installer_user}
 
     return calibration_technician, installation_technician, calibrater_user, installer_user
 
