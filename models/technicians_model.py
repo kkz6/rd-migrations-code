@@ -35,8 +35,6 @@ class Technician(Model):
     phone = CharField(max_length=255)
     user_id = BigIntegerField()
     country_id = BigIntegerField()
-    calibrator_id = BigIntegerField(null=True)  # New field for calibrator user ID
-    dealer_id = BigIntegerField(null=True)  # New field for dealer ID
     created_by = ForeignKeyField(
         DestinationUser, field="id", null=True, column_name="created_by"
     )
@@ -123,7 +121,7 @@ def generate_excel_report(migrated_data, unmigrated_data):
 
     # Headers for Migrated Technicians
     migrated_sheet.append(
-        ["Technician ID", "Name", "Email", "Phone", "User ID", "Calibrator ID", "Dealer ID", "Created At", "Updated At"]
+        ["Technician ID", "Name", "Email", "Phone", "User ID", "Created At", "Updated At"]
     )
     for record in migrated_data:
         migrated_sheet.append(
@@ -133,8 +131,6 @@ def generate_excel_report(migrated_data, unmigrated_data):
                 record["email"],
                 record["phone"],
                 record["user_id"],
-                record.get("calibrator_id", ""),
-                record.get("dealer_id", ""),
                 record["created_at"],
                 record["updated_at"],
             ]
@@ -168,10 +164,6 @@ def migrate_single_technician_data(record, new_user_id):
     Returns the new technician ID.
     """
     try:
-        # Skip if email is None or empty
-        if not record.technician_email:
-            raise ValueError("Cannot migrate technician: No email provided")
-
         dest_user = DestinationUser.get_by_id(new_user_id)
         if dest_user.parent_id is not None:
             user_id_field = dest_user.parent_id
@@ -187,8 +179,6 @@ def migrate_single_technician_data(record, new_user_id):
             phone=record.technician_phone,
             user_id=user_id_field,
             country_id=231,  # Set country_id as 231
-            calibrator_id=dest_user.id,  # Set calibrator_id to user's ID
-            dealer_id=dest_user.parent_id,  # Set dealer_id to user's parent_id
             created_by=created_by_field,
             created_at=record.add_date,
             updated_at=record.add_date,
@@ -212,8 +202,6 @@ def migrate_single_technician_data(record, new_user_id):
                     "phone": record.technician_phone,
                     "user_id": user_id_field,
                     "country_id": 231,  # Also update country_id here
-                    "calibrator_id": dest_user.id,  # Update calibrator_id
-                    "dealer_id": dest_user.parent_id,  # Update dealer_id
                     "created_by": created_by_field,
                 }
             ).where(Technician.email == record.technician_email).execute()
@@ -288,8 +276,6 @@ def migrate_technicians(automated=False):
                     "phone": record.technician_phone,
                     "user_id": user_id_field,
                     "country_id": 231,
-                    "calibrator_id": dest_user.id,  # Add calibrator_id
-                    "dealer_id": dest_user.parent_id,  # Add dealer_id
                     "created_by": created_by_field,
                     "created_at": record.add_date,
                     "updated_at": record.add_date,
@@ -298,53 +284,10 @@ def migrate_technicians(automated=False):
 
                 if len(batch_list) >= BATCH_SIZE:
                     try:
-                        # First check for existing technicians by email
-                        existing_technicians = {}
-                        data_to_insert = []
+                        data_to_insert = [d for (_, d) in batch_list]
+                        Technician.insert_many(data_to_insert).execute()
                         for (r, d) in batch_list:
-                            # Skip if email is None or empty
-                            if not r.technician_email:
-                                print(f"Warning: Skipping technician {r.technician_name} (ID: {r.id}) - No email provided")
-                                unmigrated_data.append({
-                                    "id": r.id,
-                                    "name": r.technician_name,
-                                    "email": r.technician_email,
-                                    "phone": r.technician_phone,
-                                    "reason": "No email provided"
-                                })
-                                skipped_count += 1
-                                continue
-                                
-                            existing_tech = Technician.get_or_none(Technician.email == r.technician_email)
-                            if existing_tech:
-                                existing_technicians[r.technician_email] = existing_tech
-                            else:
-                                data_to_insert.append(d)
-                        
-                        if data_to_insert:
-                            Technician.insert_many(data_to_insert).execute()
-                        
-                        # Process all technicians (both new and existing)
-                        for (r, d) in batch_list:
-                            # Skip if email is None or empty
-                            if not r.technician_email:
-                                continue
-                                
-                            if r.technician_email in existing_technicians:
-                                tech = existing_technicians[r.technician_email]
-                                # Update existing technician
-                                tech.name = r.technician_name
-                                tech.phone = r.technician_phone
-                                tech.user_id = d["user_id"]
-                                tech.country_id = 231
-                                tech.calibrator_id = d["calibrator_id"]
-                                tech.dealer_id = d["dealer_id"]
-                                tech.created_by = d["created_by"]
-                                tech.save()
-                                new_id = tech.id
-                            else:
-                                new_id = d["id"]
-                            
+                            new_id = d["id"]
                             technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                             migrated_data.append({
                                 "id": new_id,
@@ -352,8 +295,6 @@ def migrate_technicians(automated=False):
                                 "email": r.technician_email,
                                 "phone": r.technician_phone,
                                 "user_id": d["user_id"],
-                                "calibrator_id": d["calibrator_id"],
-                                "dealer_id": d["dealer_id"],
                                 "created_at": r.add_date,
                                 "updated_at": r.add_date,
                             })
@@ -372,8 +313,6 @@ def migrate_technicians(automated=False):
                                     "email": r.technician_email,
                                     "phone": r.technician_phone,
                                     "user_id": d["user_id"],
-                                    "calibrator_id": d["calibrator_id"],
-                                    "dealer_id": d["dealer_id"],
                                     "created_at": r.add_date,
                                     "updated_at": r.add_date,
                                 })
@@ -397,53 +336,10 @@ def migrate_technicians(automated=False):
             # Process any remaining records in the batch
             if batch_list:
                 try:
-                    # First check for existing technicians by email
-                    existing_technicians = {}
-                    data_to_insert = []
+                    data_to_insert = [d for (_, d) in batch_list]
+                    Technician.insert_many(data_to_insert).execute()
                     for (r, d) in batch_list:
-                        # Skip if email is None or empty
-                        if not r.technician_email:
-                            print(f"Warning: Skipping technician {r.technician_name} (ID: {r.id}) - No email provided")
-                            unmigrated_data.append({
-                                "id": r.id,
-                                "name": r.technician_name,
-                                "email": r.technician_email,
-                                "phone": r.technician_phone,
-                                "reason": "No email provided"
-                            })
-                            skipped_count += 1
-                            continue
-                                
-                        existing_tech = Technician.get_or_none(Technician.email == r.technician_email)
-                        if existing_tech:
-                            existing_technicians[r.technician_email] = existing_tech
-                        else:
-                            data_to_insert.append(d)
-                    
-                    if data_to_insert:
-                        Technician.insert_many(data_to_insert).execute()
-                    
-                    # Process all technicians (both new and existing)
-                    for (r, d) in batch_list:
-                        # Skip if email is None or empty
-                        if not r.technician_email:
-                            continue
-                                
-                        if r.technician_email in existing_technicians:
-                            tech = existing_technicians[r.technician_email]
-                            # Update existing technician
-                            tech.name = r.technician_name
-                            tech.phone = r.technician_phone
-                            tech.user_id = d["user_id"]
-                            tech.country_id = 231
-                            tech.calibrator_id = d["calibrator_id"]
-                            tech.dealer_id = d["dealer_id"]
-                            tech.created_by = d["created_by"]
-                            tech.save()
-                            new_id = tech.id
-                        else:
-                            new_id = d["id"]
-                        
+                        new_id = d["id"]
                         technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                         migrated_data.append({
                             "id": new_id,
@@ -451,8 +347,6 @@ def migrate_technicians(automated=False):
                             "email": r.technician_email,
                             "phone": r.technician_phone,
                             "user_id": d["user_id"],
-                            "calibrator_id": d["calibrator_id"],
-                            "dealer_id": d["dealer_id"],
                             "created_at": r.add_date,
                             "updated_at": r.add_date,
                         })
@@ -469,8 +363,6 @@ def migrate_technicians(automated=False):
                                 "email": r.technician_email,
                                 "phone": r.technician_phone,
                                 "user_id": d["user_id"],
-                                "calibrator_id": d["calibrator_id"],
-                                "dealer_id": d["dealer_id"],
                                 "created_at": r.add_date,
                                 "updated_at": r.add_date,
                             })
@@ -520,7 +412,6 @@ def migrate_technicians(automated=False):
                 ).ask()
                 if proceed:
                     try:
-                        dest_user = DestinationUser.get_by_id(new_user_id)  # Get dest_user before using it
                         new_id = migrate_single_technician_data(record, new_user_id)
                         technicians_mappings[new_id] = {"old_technician_id": record.id, "user_id": new_user_id}
                         save_technicians_mappings(technicians_mappings)
@@ -530,8 +421,6 @@ def migrate_technicians(automated=False):
                             "email": record.technician_email,
                             "phone": record.technician_phone,
                             "user_id": new_user_id,
-                            "calibrator_id": dest_user.id,  # Set from destination user
-                            "dealer_id": dest_user.parent_id,  # Set from destination user's parent
                             "created_at": record.add_date,
                             "updated_at": record.add_date,
                         })
@@ -607,22 +496,7 @@ def run_migration():
                 )
                 return
 
-            dest_user = DestinationUser.get_by_id(new_user_id)
-            new_id = migrate_single_technician_data(record, new_user_id)
-            
-            # Generate report for single technician migration
-            migrated_data = [{
-                "id": new_id,
-                "name": record.technician_name,
-                "email": record.technician_email,
-                "phone": record.technician_phone,
-                "user_id": new_user_id,
-                "calibrator_id": dest_user.id,
-                "dealer_id": dest_user.parent_id,
-                "created_at": record.add_date,
-                "updated_at": record.add_date,
-            }]
-            generate_excel_report(migrated_data, [])
+            migrate_single_technician_data(record, new_user_id)
             print(f"Successfully migrated Technician: {record.technician_name}")
 
         else:
