@@ -47,7 +47,6 @@ class Customer(Model):
     address = TextField()
     contact_number = CharField(max_length=255)
     user_id = BigIntegerField()
-    country_id = IntegerField(default=231)
     created_at = DateTimeField()  # Added created_at
     updated_at = DateTimeField()  # Added updated_at
 

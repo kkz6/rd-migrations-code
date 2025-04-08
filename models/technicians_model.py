@@ -45,7 +45,6 @@ class Technician(Model):
         table_name = "technicians"
 
 class TechnicianUser(Model):
-    id = BigIntegerField(primary_key=True)
     technician_id = BigIntegerField()
     user_id = BigIntegerField()
 
