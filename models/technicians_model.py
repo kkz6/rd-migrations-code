@@ -189,15 +189,14 @@ def migrate_single_technician_data(record, new_user_id):
             created_at=record.add_date,
             updated_at=record.add_date,
         )
-        print(f"Created technician: {record.technician_name} with created_by: {created_by_field}")
+        print(f"Created technician: {record.technician_name}")
 
         # Create TechnicianUser relationship
         try:
             TechnicianUser.get_or_create(
                 technician_id=technician.id,
-                user_id=technician.created_by.id  # Use the actual created_by value from the technician
+                user_id=new_user_id
             )
-            print(f"Created TechnicianUser relationship with user_id: {technician.created_by.id}")
         except Exception as e:
             print(f"Warning: Failed to create TechnicianUser relationship: {str(e)}")
 
@@ -221,9 +220,8 @@ def migrate_single_technician_data(record, new_user_id):
                 technician = Technician.get(Technician.email == record.technician_email.strip().lower())
                 TechnicianUser.get_or_create(
                     technician_id=technician.id,
-                    user_id=technician.created_by.id  # Use the actual created_by value from the technician
+                    user_id=new_user_id
                 )
-                print(f"Updated TechnicianUser relationship with user_id: {technician.created_by.id}")
             except Exception as rel_e:
                 print(f"Warning: Failed to create TechnicianUser relationship: {str(rel_e)}")
             
@@ -319,16 +317,6 @@ def migrate_technicians(automated=False):
                                 "created_at": r.add_date,
                                 "updated_at": r.add_date,
                             })
-                            # Create TechnicianUser relationship
-                            try:
-                                technician = Technician.get_by_id(new_id)
-                                TechnicianUser.create(
-                                    technician_id=new_id,
-                                    user_id=technician.created_by.id  # Use the actual created_by value from the technician
-                                )
-                                print(f"Created TechnicianUser relationship for technician {r.technician_name} with user_id: {technician.created_by.id}")
-                            except Exception as e:
-                                print(f"Warning: Failed to create TechnicianUser relationship for technician {r.technician_name}: {str(e)}")
                             migrated_count += 1
                         save_technicians_mappings(technicians_mappings)
                         batch_list = []
@@ -381,16 +369,6 @@ def migrate_technicians(automated=False):
                             "created_at": r.add_date,
                             "updated_at": r.add_date,
                         })
-                        # Create TechnicianUser relationship
-                        try:
-                            technician = Technician.get_by_id(new_id)
-                            TechnicianUser.create(
-                                technician_id=new_id,
-                                user_id=technician.created_by.id  # Use the actual created_by value from the technician
-                            )
-                            print(f"Created TechnicianUser relationship for technician {r.technician_name} with user_id: {technician.created_by.id}")
-                        except Exception as e:
-                            print(f"Warning: Failed to create TechnicianUser relationship for technician {r.technician_name}: {str(e)}")
                         migrated_count += 1
                     save_technicians_mappings(technicians_mappings)
                 except IntegrityError:
