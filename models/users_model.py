@@ -74,7 +74,7 @@ class DestinationUser(Model):
     mobile = CharField(max_length=255, null=True)
     emirates = CharField(max_length=255, null=True)
     timezone = CharField(max_length=255, null=True)
-    country = IntegerField(default=27)
+    country_id = IntegerField(default=231)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
     created_at = DateTimeField(null=True)
