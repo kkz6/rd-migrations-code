@@ -48,6 +48,7 @@ class TechnicianUser(Model):
     user_id = BigIntegerField()
 
     class Meta:
+        primary_key = False
         database = dest_db
         table_name = "technician_user"
 
