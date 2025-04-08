@@ -51,6 +51,7 @@ class User(Model):
     cms_support_email = CharField(max_length=100, null=True)
     cms_support_mobileno = CharField(max_length=20, null=True)
     is_cms_admin = BooleanField(null=True)
+    
 
     class Meta:
         database = source_db
@@ -73,7 +74,7 @@ class DestinationUser(Model):
     mobile = CharField(max_length=255, null=True)
     emirates = CharField(max_length=255, null=True)
     timezone = CharField(max_length=255, null=True)
-    country_id = IntegerField(default=231)
+    country = IntegerField(default=27)
     state = CharField(max_length=255, null=True)
     remember_token = CharField(max_length=100, null=True)
     created_at = DateTimeField(null=True)

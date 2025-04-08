@@ -10,7 +10,7 @@ from peewee import *
 from models.certificates_model import CertificateRecord, Certificate
 from models.devices_model import Device
 from models.customers_model import Customer
-from models.technicians_model import Technician
+from models.technicians_model import Technician, TechnicianUser
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
 from pytz import timezone, UTC
@@ -121,9 +121,10 @@ def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_tech
       2. Retrieve the user objects from USER_CACHE (or via DestinationUser.get_by_id).
       3. For each role (calibration and installation):
          a. If a technician ID is provided (non-zero), try to find the mapped technician via mappings.
-         b. If not provided or mapping not found, try to get an existing Technician using the user's email.
+         b. If not provided or mapping not found, try to get an existing Technician using the user's email, name and phone.
          c. If no technician exists, create a new one and update the technician mappings.
       4. Use caching to avoid duplicate lookups.
+      5. Create or update TechnicianUser relationship.
     """
     import traceback
     from datetime import datetime
@@ -167,76 +168,86 @@ def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_tech
     calibration_technician = None
     installation_technician = None
 
+    def find_or_create_technician(user, technician_id=None, role="unknown"):
+        """Helper function to find or create a technician with proper duplicate checking"""
+        # First try to find by mapping if technician_id is provided
+        if technician_id is not None:
+            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
+                try:
+                    if int(tech_mapping.get("old_technician_id", 0)) == int(technician_id):
+                        return Technician.get_by_id(int(new_tech_id))
+                except Exception:
+                    continue
+
+        # Try to find by exact match of name, email and phone
+        existing_tech = Technician.get_or_none(
+            (Technician.name == user.name.strip()) &
+            (Technician.email == user.email.strip()) &
+            (Technician.phone == (user.phone or "0000000000").strip())
+        )
+
+        if existing_tech:
+            return existing_tech
+
+        # If not found, create new technician
+        tech_user_id = user.parent_id if user.parent_id else user.id
+        new_tech = Technician.create(
+            name=user.name.strip(),
+            email=user.email.strip(),
+            phone=(user.phone or "0000000000").strip(),
+            user_id=tech_user_id,
+            created_by=user.id,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+        # Update technician mapping
+        with TECHNICIAN_MAPPING_LOCK:
+            mappings["technician"][str(new_tech.id)] = {
+                "old_technician_id": technician_id if technician_id else 0,
+                "user_id": user.id,
+            }
+            save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
+
+        return new_tech
+
     # -- Calibration Technician --
     if calib_cache_key in TECHNICIAN_CACHE:
         calibration_technician = TECHNICIAN_CACHE[calib_cache_key]['tech']
     else:
-        # (a) If a technician ID was provided, try to find the mapped technician.
-        if calibrater_technician_id is not None:
-            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
-                try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(calibrater_technician_id):
-                        calibration_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-                except Exception:
-                    continue
-        # (b) If not found (or no technician ID provided), try to get an existing technician by email.
-        if not calibration_technician:
-            calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
-            # (c) If still not found, create a new technician record.
-            if not calibration_technician:
-                tech_user_id = calibrater_user.parent_id if calibrater_user.parent_id else calibrater_user.id
-                calibration_technician = Technician.create(
-                    name=calibrater_user.name,
-                    email=calibrater_user.email,
-                    phone=calibrater_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=calibrater_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            # Update technician mapping immediately.
-            with TECHNICIAN_MAPPING_LOCK:
-                mappings["technician"][str(calibration_technician.id)] = {
-                    "old_technician_id": calibrater_technician_id if calibrater_technician_id else 0,
-                    "user_id": new_calibrater_user_id,
-                }
-                save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
-        # Cache the result.
+        calibration_technician = find_or_create_technician(
+            calibrater_user, 
+            calibrater_technician_id,
+            "calibration"
+        )
         TECHNICIAN_CACHE[calib_cache_key] = {'tech': calibration_technician, 'user': calibrater_user}
 
     # -- Installation Technician --
     if install_cache_key in TECHNICIAN_CACHE:
         installation_technician = TECHNICIAN_CACHE[install_cache_key]['tech']
     else:
-        if installer_technician_id is not None:
-            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
-                try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(installer_technician_id):
-                        installation_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-                except Exception:
-                    continue
-        if not installation_technician:
-            installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
-            if not installation_technician:
-                tech_user_id = installer_user.parent_id if installer_user.parent_id else installer_user.id
-                installation_technician = Technician.create(
-                    name=installer_user.name,
-                    email=installer_user.email,
-                    phone=installer_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=installer_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            with TECHNICIAN_MAPPING_LOCK:
-                mappings["technician"][str(installation_technician.id)] = {
-                    "old_technician_id": installer_technician_id if installer_technician_id else 0,
-                    "user_id": new_installer_user_id,
-                }
-                save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
+        installation_technician = find_or_create_technician(
+            installer_user,
+            installer_technician_id,
+            "installation"
+        )
         TECHNICIAN_CACHE[install_cache_key] = {'tech': installation_technician, 'user': installer_user}
+
+    # Create or update TechnicianUser relationships
+    try:
+        # For calibration technician
+        TechnicianUser.get_or_create(
+            technician_id=calibration_technician.id,
+            user_id=new_calibrater_user_id
+        )
+
+        # For installation technician
+        TechnicianUser.get_or_create(
+            technician_id=installation_technician.id,
+            user_id=new_installer_user_id
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create TechnicianUser relationships: {str(e)}")
 
     return calibration_technician, installation_technician, calibrater_user, installer_user
 

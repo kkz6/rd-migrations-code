@@ -34,7 +34,6 @@ class Technician(Model):
     email = CharField(max_length=255)
     phone = CharField(max_length=255)
     user_id = BigIntegerField()
-    country_id = BigIntegerField()
     created_by = ForeignKeyField(
         DestinationUser, field="id", null=True, column_name="created_by"
     )
@@ -45,6 +44,14 @@ class Technician(Model):
         database = dest_db
         table_name = "technicians"
 
+class TechnicianUser(Model):
+    id = BigIntegerField(primary_key=True)
+    technician_id = BigIntegerField()
+    user_id = BigIntegerField()
+
+    class Meta:
+        database = dest_db
+        table_name = "technician_user"
 
 # Helper Functions
 def load_user_mappings():
@@ -172,41 +179,55 @@ def migrate_single_technician_data(record, new_user_id):
             user_id_field = dest_user.id
             created_by_field = dest_user.id
 
+        # Create new technician with trimmed fields and lowercase email
         technician = Technician.create(
             id=record.id,
-            name=record.technician_name,
-            email=record.technician_email,
-            phone=record.technician_phone,
+            name=record.technician_name.strip(),
+            email=record.technician_email.strip().lower(),
+            phone=record.technician_phone.strip(),
             user_id=user_id_field,
-            country_id=231,  # Set country_id as 231
             created_by=created_by_field,
             created_at=record.add_date,
             updated_at=record.add_date,
         )
-        print(f"Migrated Technician: {record.technician_name} (New ID: {technician.id})")
+        print(f"Created technician: {record.technician_name}")
+
+        # Create TechnicianUser relationship
+        try:
+            TechnicianUser.get_or_create(
+                technician_id=technician.id,
+                user_id=new_user_id
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create TechnicianUser relationship: {str(e)}")
+
         return technician.id
+
     except IntegrityError as e:
         if "Duplicate entry" in str(e):
             print(f"Duplicate entry for {record.technician_email}. Attempting to update...")
-            dest_user = DestinationUser.get_by_id(new_user_id)
-            if dest_user.parent_id is not None:
-                user_id_field = dest_user.parent_id
-                created_by_field = dest_user.id
-            else:
-                user_id_field = dest_user.id
-                created_by_field = dest_user.id
-
+            # Update the technician with trimmed fields and lowercase email
             Technician.update(
                 {
-                    "name": record.technician_name,
-                    "phone": record.technician_phone,
+                    "name": record.technician_name.strip(),
+                    "phone": record.technician_phone.strip(),
                     "user_id": user_id_field,
-                    "country_id": 231,  # Also update country_id here
                     "created_by": created_by_field,
                 }
-            ).where(Technician.email == record.technician_email).execute()
-            print(f"Updated existing technician: {record.technician_name}")
-            return Technician.get(Technician.email == record.technician_email).id
+            ).where(Technician.email == record.technician_email.strip().lower()).execute()
+            
+            # Ensure TechnicianUser relationship exists
+            try:
+                technician = Technician.get(Technician.email == record.technician_email.strip().lower())
+                TechnicianUser.get_or_create(
+                    technician_id=technician.id,
+                    user_id=new_user_id
+                )
+            except Exception as rel_e:
+                print(f"Warning: Failed to create TechnicianUser relationship: {str(rel_e)}")
+            
+            print(f"Updated technician: {record.technician_name}")
+            return technician.id
         else:
             raise
 
@@ -271,11 +292,10 @@ def migrate_technicians(automated=False):
 
                 data = {
                     "id": record.id,
-                    "name": record.technician_name,
-                    "email": record.technician_email,
-                    "phone": record.technician_phone,
+                    "name": record.technician_name.strip(),
+                    "email": record.technician_email.strip().lower(),
+                    "phone": record.technician_phone.strip(),
                     "user_id": user_id_field,
-                    "country_id": 231,
                     "created_by": created_by_field,
                     "created_at": record.add_date,
                     "updated_at": record.add_date,
@@ -291,9 +311,9 @@ def migrate_technicians(automated=False):
                             technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                             migrated_data.append({
                                 "id": new_id,
-                                "name": r.technician_name,
-                                "email": r.technician_email,
-                                "phone": r.technician_phone,
+                                "name": r.technician_name.strip(),
+                                "email": r.technician_email.strip().lower(),
+                                "phone": r.technician_phone.strip(),
                                 "user_id": d["user_id"],
                                 "created_at": r.add_date,
                                 "updated_at": r.add_date,
@@ -309,9 +329,9 @@ def migrate_technicians(automated=False):
                                 technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                                 migrated_data.append({
                                     "id": new_id,
-                                    "name": r.technician_name,
-                                    "email": r.technician_email,
-                                    "phone": r.technician_phone,
+                                    "name": r.technician_name.strip(),
+                                    "email": r.technician_email.strip().lower(),
+                                    "phone": r.technician_phone.strip(),
                                     "user_id": d["user_id"],
                                     "created_at": r.add_date,
                                     "updated_at": r.add_date,
@@ -322,9 +342,9 @@ def migrate_technicians(automated=False):
                                 print(f"Error inserting technician {r.technician_name}: {ex}")
                                 unmigrated_data.append({
                                     "id": r.id,
-                                    "name": r.technician_name,
-                                    "email": r.technician_email,
-                                    "phone": r.technician_phone,
+                                    "name": r.technician_name.strip(),
+                                    "email": r.technician_email.strip().lower(),
+                                    "phone": r.technician_phone.strip(),
                                     "reason": str(ex)
                                 })
                                 skipped_count += 1
@@ -343,9 +363,9 @@ def migrate_technicians(automated=False):
                         technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                         migrated_data.append({
                             "id": new_id,
-                            "name": r.technician_name,
-                            "email": r.technician_email,
-                            "phone": r.technician_phone,
+                            "name": r.technician_name.strip(),
+                            "email": r.technician_email.strip().lower(),
+                            "phone": r.technician_phone.strip(),
                             "user_id": d["user_id"],
                             "created_at": r.add_date,
                             "updated_at": r.add_date,
@@ -359,9 +379,9 @@ def migrate_technicians(automated=False):
                             technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
                             migrated_data.append({
                                 "id": new_id,
-                                "name": r.technician_name,
-                                "email": r.technician_email,
-                                "phone": r.technician_phone,
+                                "name": r.technician_name.strip(),
+                                "email": r.technician_email.strip().lower(),
+                                "phone": r.technician_phone.strip(),
                                 "user_id": d["user_id"],
                                 "created_at": r.add_date,
                                 "updated_at": r.add_date,
@@ -372,9 +392,9 @@ def migrate_technicians(automated=False):
                             print(f"Error inserting technician {r.technician_name}: {ex}")
                             unmigrated_data.append({
                                 "id": r.id,
-                                "name": r.technician_name,
-                                "email": r.technician_email,
-                                "phone": r.technician_phone,
+                                "name": r.technician_name.strip(),
+                                "email": r.technician_email.strip().lower(),
+                                "phone": r.technician_phone.strip(),
                                 "reason": str(ex)
                             })
                             skipped_count += 1
@@ -398,9 +418,9 @@ def migrate_technicians(automated=False):
                     print(f"Skipping Technician {record.technician_name} (ID: {record.id}) - No mapped user found.")
                     unmigrated_data.append({
                         "id": record.id,
-                        "name": record.technician_name,
-                        "email": record.technician_email,
-                        "phone": record.technician_phone,
+                        "name": record.technician_name.strip(),
+                        "email": record.technician_email.strip().lower(),
+                        "phone": record.technician_phone.strip(),
                         "reason": "No mapped user found",
                     })
                     skipped_count += 1
@@ -417,9 +437,9 @@ def migrate_technicians(automated=False):
                         save_technicians_mappings(technicians_mappings)
                         migrated_data.append({
                             "id": new_id,
-                            "name": record.technician_name,
-                            "email": record.technician_email,
-                            "phone": record.technician_phone,
+                            "name": record.technician_name.strip(),
+                            "email": record.technician_email.strip().lower(),
+                            "phone": record.technician_phone.strip(),
                             "user_id": new_user_id,
                             "created_at": record.add_date,
                             "updated_at": record.add_date,
@@ -430,9 +450,9 @@ def migrate_technicians(automated=False):
                         print(f"Error migrating Technician {record.technician_name}: {e}")
                         unmigrated_data.append({
                             "id": record.id,
-                            "name": record.technician_name,
-                            "email": record.technician_email,
-                            "phone": record.technician_phone,
+                            "name": record.technician_name.strip(),
+                            "email": record.technician_email.strip().lower(),
+                            "phone": record.technician_phone.strip(),
                             "reason": str(e),
                         })
                         skipped_count += 1
