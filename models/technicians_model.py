@@ -3,15 +3,14 @@ import questionary
 from datetime import datetime
 from openpyxl import Workbook
 from peewee import *
+from peewee import fn  # For case-insensitive queries
 from source_db import source_db
 from dest_db import dest_db
 from models.users_model import DestinationUser
-from tqdm import tqdm  # Added for progress bar
+from tqdm import tqdm  # For the progress bar
 
 # Constants
 TECHNICIANS_MAPPING_FILE = "technicians_mapping.json"
-EXCEL_FILE_NAME = "technician_migration_report.xlsx"
-BATCH_SIZE = 100  # Adjust batch size as needed
 
 # Source Model
 class TechnicianMaster(Model):
@@ -52,6 +51,7 @@ class TechnicianUser(Model):
         database = dest_db
         table_name = "technician_user"
 
+
 # Helper Functions
 def load_user_mappings():
     """Load user mappings from the JSON file."""
@@ -62,7 +62,6 @@ def load_user_mappings():
         print("User mappings file not found. Ensure user_mappings.json exists.")
         return {}
 
-
 def load_technicians_mappings():
     """Load technicians mappings from the JSON file."""
     try:
@@ -72,12 +71,10 @@ def load_technicians_mappings():
         print(f"{TECHNICIANS_MAPPING_FILE} not found. Creating a new one.")
         return {}
 
-
 def save_technicians_mappings(technicians_mappings):
     """Save technicians mappings to the JSON file."""
     with open(TECHNICIANS_MAPPING_FILE, "w") as file:
         json.dump(technicians_mappings, file, indent=4)
-
 
 def clean_destination_table():
     """
@@ -107,7 +104,6 @@ def clean_destination_table():
         if not dest_db.is_closed():
             dest_db.close()
 
-
 def get_new_user_id_from_mapping(old_user_id, user_mappings):
     """
     Get the new user_id from the user_mappings.json file based on the old user_id.
@@ -116,7 +112,6 @@ def get_new_user_id_from_mapping(old_user_id, user_mappings):
         if mapping.get("old_user_id") == old_user_id:
             return int(new_user_id)
     return None
-
 
 def generate_excel_report(migrated_data, unmigrated_data):
     """Generate an Excel file with migrated and unmigrated technician data."""
@@ -155,21 +150,35 @@ def generate_excel_report(migrated_data, unmigrated_data):
             ]
         )
     try:
-        workbook.save(EXCEL_FILE_NAME)
-        print(f"\nMigration report saved as {EXCEL_FILE_NAME}")
+        workbook.save("technician_migration_report.xlsx")
+        print(f"\nMigration report saved as technician_migration_report.xlsx")
     except KeyboardInterrupt:
-        # Catching interrupt during export – data is still saved.
-        workbook.save(EXCEL_FILE_NAME)
-        print(f"\nExport interrupted but partial report saved as {EXCEL_FILE_NAME}")
-
+        workbook.save("technician_migration_report.xlsx")
+        print(f"\nExport interrupted but partial report saved as technician_migration_report.xlsx")
 
 def migrate_single_technician_data(record, new_user_id):
     """
     Migrate a single technician record to the destination database.
-    Uses the fetched destination user record to determine the proper user_id and created_by fields.
-    Returns the new technician ID.
+    Checks if a technician already exists in the destination (matching name, phone, and email regardless of case).
+    If exists, returns the existing technician's id; if not, creates a new record.
     """
     try:
+        # Clean and prepare the fields
+        technician_name = record.technician_name.strip()
+        technician_email = record.technician_email.strip().lower()
+        technician_phone = record.technician_phone.strip()
+
+        # Check if a matching technician already exists (case-insensitive match for name and email)
+        existing = Technician.select().where(
+            fn.Lower(Technician.name) == technician_name.lower(),
+            Technician.email == technician_email,
+            Technician.phone == technician_phone
+        ).first()
+        if existing:
+            print(f"Duplicate found. Using existing technician: {technician_name} (ID: {existing.id})")
+            return existing.id
+
+        # Get destination user details
         dest_user = DestinationUser.get_by_id(new_user_id)
         if dest_user.parent_id is not None:
             user_id_field = dest_user.parent_id
@@ -178,18 +187,18 @@ def migrate_single_technician_data(record, new_user_id):
             user_id_field = dest_user.id
             created_by_field = dest_user.id
 
-        # Create new technician with trimmed fields and lowercase email
+        # Create a new technician record
         technician = Technician.create(
             id=record.id,
-            name=record.technician_name.strip(),
-            email=record.technician_email.strip().lower(),
-            phone=record.technician_phone.strip(),
+            name=technician_name,
+            email=technician_email,
+            phone=technician_phone,
             user_id=user_id_field,
             created_by=created_by_field,
             created_at=record.add_date,
             updated_at=record.add_date,
         )
-        print(f"Created technician: {record.technician_name}")
+        print(f"Created technician: {technician_name}")
 
         # Create TechnicianUser relationship
         try:
@@ -203,40 +212,15 @@ def migrate_single_technician_data(record, new_user_id):
         return technician.id
 
     except IntegrityError as e:
-        if "Duplicate entry" in str(e):
-            print(f"Duplicate entry for {record.technician_email}. Attempting to update...")
-            # Update the technician with trimmed fields and lowercase email
-            Technician.update(
-                {
-                    "name": record.technician_name.strip(),
-                    "phone": record.technician_phone.strip(),
-                    "user_id": user_id_field,
-                    "created_by": created_by_field,
-                }
-            ).where(Technician.email == record.technician_email.strip().lower()).execute()
-            
-            # Ensure TechnicianUser relationship exists
-            try:
-                technician = Technician.get(Technician.email == record.technician_email.strip().lower())
-                TechnicianUser.get_or_create(
-                    technician_id=technician.id,
-                    user_id=new_user_id
-                )
-            except Exception as rel_e:
-                print(f"Warning: Failed to create TechnicianUser relationship: {str(rel_e)}")
-            
-            print(f"Updated technician: {record.technician_name}")
-            return technician.id
-        else:
-            raise
-
+        print(f"IntegrityError for {technician_name}: {e}")
+        raise
 
 def migrate_technicians(automated=False):
     """
-    Migrate all technicians from the source database to the destination database.
-    In fully automated mode, batch insertion is used with a progress bar.
-    In one-by-one mode, the CLI displays progress information.
-    In case of a KeyboardInterrupt, the migration stops gracefully and an Excel report is generated.
+    Migrate all technicians from the source database to the destination database one by one.
+    Checks for duplicates in the destination database using a case-insensitive match on name and email,
+    and an exact match on phone. If a duplicate is found, the existing record is used.
+    In one-by-one mode, user confirmation is requested; in automated mode, it processes silently.
     """
     migrated_data = []
     unmigrated_data = []
@@ -244,7 +228,6 @@ def migrate_technicians(automated=False):
     migrated_count = 0
     skipped_count = 0
 
-    # Connect to databases if not already connected
     if source_db.is_closed():
         source_db.connect()
     if dest_db.is_closed():
@@ -256,15 +239,15 @@ def migrate_technicians(automated=False):
 
     try:
         if automated:
-            print("Starting Fully Automated Migration with Batch Insertion")
+            print("Starting Fully Automated Migration (One-by-One without batch insert)")
             progress_bar = tqdm(total=total_records, desc="Migrating Technicians", ncols=100, colour="green")
-            batch_list = []
             for record in TechnicianMaster.select():
-                # Check if already migrated
+                progress_bar.update(1)
+
+                # Skip if the record was already migrated (based on mapping)
                 if any(mapping.get("old_technician_id") == record.id for mapping in technicians_mappings.values()):
                     print(f"Technician {record.technician_name} (ID: {record.id}) already migrated. Skipping...")
                     skipped_count += 1
-                    progress_bar.update(1)
                     continue
 
                 new_user_id = get_new_user_id_from_mapping(record.user_id, user_mappings)
@@ -272,140 +255,48 @@ def migrate_technicians(automated=False):
                     print(f"Skipping Technician {record.technician_name} (ID: {record.id}) - No mapped user found.")
                     unmigrated_data.append({
                         "id": record.id,
-                        "name": record.technician_name,
-                        "email": record.technician_email,
-                        "phone": record.technician_phone,
+                        "name": record.technician_name.strip(),
+                        "email": record.technician_email.strip().lower(),
+                        "phone": record.technician_phone.strip(),
                         "reason": "No mapped user found",
                     })
                     skipped_count += 1
-                    progress_bar.update(1)
                     continue
 
-                dest_user = DestinationUser.get_by_id(new_user_id)
-                if dest_user.parent_id is not None:
-                    user_id_field = dest_user.parent_id
-                    created_by_field = dest_user.id
-                else:
-                    user_id_field = dest_user.id
-                    created_by_field = dest_user.id
-
-                data = {
-                    "id": record.id,
-                    "name": record.technician_name.strip(),
-                    "email": record.technician_email.strip().lower(),
-                    "phone": record.technician_phone.strip(),
-                    "user_id": user_id_field,
-                    "created_by": created_by_field,
-                    "created_at": record.add_date,
-                    "updated_at": record.add_date,
-                }
-                batch_list.append((record, data))
-
-                if len(batch_list) >= BATCH_SIZE:
-                    try:
-                        data_to_insert = [d for (_, d) in batch_list]
-                        Technician.insert_many(data_to_insert).execute()
-                        for (r, d) in batch_list:
-                            new_id = d["id"]
-                            technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
-                            migrated_data.append({
-                                "id": new_id,
-                                "name": r.technician_name.strip(),
-                                "email": r.technician_email.strip().lower(),
-                                "phone": r.technician_phone.strip(),
-                                "user_id": d["user_id"],
-                                "created_at": r.add_date,
-                                "updated_at": r.add_date,
-                            })
-                            migrated_count += 1
-                        save_technicians_mappings(technicians_mappings)
-                        batch_list = []
-                    except IntegrityError:
-                        print("Batch insert failed, falling back to individual insertion for this batch.")
-                        for (r, d) in batch_list:
-                            try:
-                                new_id = migrate_single_technician_data(r, new_user_id)
-                                technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
-                                migrated_data.append({
-                                    "id": new_id,
-                                    "name": r.technician_name.strip(),
-                                    "email": r.technician_email.strip().lower(),
-                                    "phone": r.technician_phone.strip(),
-                                    "user_id": d["user_id"],
-                                    "created_at": r.add_date,
-                                    "updated_at": r.add_date,
-                                })
-                                migrated_count += 1
-                                save_technicians_mappings(technicians_mappings)
-                            except Exception as ex:
-                                print(f"Error inserting technician {r.technician_name}: {ex}")
-                                unmigrated_data.append({
-                                    "id": r.id,
-                                    "name": r.technician_name.strip(),
-                                    "email": r.technician_email.strip().lower(),
-                                    "phone": r.technician_phone.strip(),
-                                    "reason": str(ex)
-                                })
-                                skipped_count += 1
-                        batch_list = []
-                    finally:
-                        progress_bar.update(1)
-                else:
-                    progress_bar.update(1)
-            # Process any remaining records in the batch
-            if batch_list:
                 try:
-                    data_to_insert = [d for (_, d) in batch_list]
-                    Technician.insert_many(data_to_insert).execute()
-                    for (r, d) in batch_list:
-                        new_id = d["id"]
-                        technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
-                        migrated_data.append({
-                            "id": new_id,
-                            "name": r.technician_name.strip(),
-                            "email": r.technician_email.strip().lower(),
-                            "phone": r.technician_phone.strip(),
-                            "user_id": d["user_id"],
-                            "created_at": r.add_date,
-                            "updated_at": r.add_date,
-                        })
-                        migrated_count += 1
-                    save_technicians_mappings(technicians_mappings)
-                except IntegrityError:
-                    for (r, d) in batch_list:
-                        try:
-                            new_id = migrate_single_technician_data(r, new_user_id)
-                            technicians_mappings[new_id] = {"old_technician_id": r.id, "user_id": d["user_id"]}
-                            migrated_data.append({
-                                "id": new_id,
-                                "name": r.technician_name.strip(),
-                                "email": r.technician_email.strip().lower(),
-                                "phone": r.technician_phone.strip(),
-                                "user_id": d["user_id"],
-                                "created_at": r.add_date,
-                                "updated_at": r.add_date,
-                            })
-                            migrated_count += 1
-                            save_technicians_mappings(technicians_mappings)
-                        except Exception as ex:
-                            print(f"Error inserting technician {r.technician_name}: {ex}")
-                            unmigrated_data.append({
-                                "id": r.id,
-                                "name": r.technician_name.strip(),
-                                "email": r.technician_email.strip().lower(),
-                                "phone": r.technician_phone.strip(),
-                                "reason": str(ex)
-                            })
-                            skipped_count += 1
-                    batch_list = []
+                    new_id = migrate_single_technician_data(record, new_user_id)
+                    # Update mapping only if not already present
+                    if str(new_id) not in technicians_mappings:
+                        technicians_mappings[str(new_id)] = {"old_technician_id": record.id, "user_id": new_user_id}
+                        save_technicians_mappings(technicians_mappings)
+                    migrated_data.append({
+                        "id": new_id,
+                        "name": record.technician_name.strip(),
+                        "email": record.technician_email.strip().lower(),
+                        "phone": record.technician_phone.strip(),
+                        "user_id": new_user_id,
+                        "created_at": record.add_date,
+                        "updated_at": record.add_date,
+                    })
+                    migrated_count += 1
+                except Exception as ex:
+                    print(f"Error inserting technician {record.technician_name}: {ex}")
+                    unmigrated_data.append({
+                        "id": record.id,
+                        "name": record.technician_name.strip(),
+                        "email": record.technician_email.strip().lower(),
+                        "phone": record.technician_phone.strip(),
+                        "reason": str(ex)
+                    })
+                    skipped_count += 1
             progress_bar.close()
         else:
-            print("Starting One-by-One Migration")
+            print("Starting One-by-One Migration (Interactive)")
             processed_count = 0
             for record in TechnicianMaster.select():
                 processed_count += 1
                 print(f"\nProcessing Technician {processed_count} of {total_records} (Name: {record.technician_name})")
-                # Check if already migrated
+                # Skip if already migrated
                 if any(mapping.get("old_technician_id") == record.id for mapping in technicians_mappings.values()):
                     print(f"Technician {record.technician_name} (ID: {record.id}) already migrated. Skipping...")
                     skipped_count += 1
@@ -432,8 +323,9 @@ def migrate_technicians(automated=False):
                 if proceed:
                     try:
                         new_id = migrate_single_technician_data(record, new_user_id)
-                        technicians_mappings[new_id] = {"old_technician_id": record.id, "user_id": new_user_id}
-                        save_technicians_mappings(technicians_mappings)
+                        if str(new_id) not in technicians_mappings:
+                            technicians_mappings[str(new_id)] = {"old_technician_id": record.id, "user_id": new_user_id}
+                            save_technicians_mappings(technicians_mappings)
                         migrated_data.append({
                             "id": new_id,
                             "name": record.technician_name.strip(),
@@ -463,20 +355,17 @@ def migrate_technicians(automated=False):
         print("\nMigration interrupted by user. Proceeding to export report...")
     finally:
         generate_excel_report(migrated_data, unmigrated_data)
-
-        # Summary of migration results
         print("\nMigration Summary:")
         print(f"  Total records: {total_records}")
         print(f"  Successfully migrated: {migrated_count}")
         print(f"  Skipped/Failed: {skipped_count}")
 
-
 def run_migration():
     """
     Main function to run the technician migration.
-    Provides options for:
-      1. Fully automated (batch) migration.
-      2. Technician-by-technician migration.
+    Offers three options:
+      1. Fully automated migration (processes records one-by-one without confirmation).
+      2. Interactive migration (prompts for each technician).
       3. Single technician migration by ID.
     """
     try:
@@ -515,8 +404,14 @@ def run_migration():
                 )
                 return
 
-            migrate_single_technician_data(record, new_user_id)
-            print(f"Successfully migrated Technician: {record.technician_name}")
+            try:
+                new_id = migrate_single_technician_data(record, new_user_id)
+                technicians_mappings = load_technicians_mappings()
+                technicians_mappings[str(new_id)] = {"old_technician_id": record.id, "user_id": new_user_id}
+                save_technicians_mappings(technicians_mappings)
+                print(f"Successfully migrated Technician: {record.technician_name}")
+            except Exception as e:
+                print(f"Error migrating Technician {record.technician_name}: {e}")
 
         else:
             print("Invalid choice. Exiting...")
@@ -531,7 +426,6 @@ def run_migration():
             source_db.close()
         if not dest_db.is_closed():
             dest_db.close()
-
 
 if __name__ == "__main__":
     run_migration()
