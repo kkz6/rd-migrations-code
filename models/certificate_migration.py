@@ -107,23 +107,10 @@ def preload_data():
     USER_CACHE = {user.id: user for user in DestinationUser.select()}
 
 def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_technician_id,
-                                               installer_user_id, installer_technician_id, mappings):
+                                           installer_user_id, installer_technician_id, mappings):
     """
     Returns a tuple:
       (calibration_technician, installation_technician, calibration_user, installation_user)
-      
-    Assumptions:
-      - calibrater_user_id and installer_user_id are always provided.
-      - If calibrater_technician_id or installer_technician_id are 0 or null, they are treated as missing.
-      
-    Steps:
-      1. Lookup the new user IDs for calibrater and installer using the user mapping.
-      2. Retrieve the user objects from USER_CACHE (or via DestinationUser.get_by_id).
-      3. For each role (calibration and installation):
-         a. If a technician ID is provided (non-zero), try to find the mapped technician via mappings.
-         b. If not provided or mapping not found, try to get an existing Technician using the user's email.
-         c. If no technician exists, create a new one and update the technician mappings.
-      4. Use caching to avoid duplicate lookups.
     """
     import traceback
     from datetime import datetime
@@ -160,83 +147,64 @@ def get_or_create_technician_for_certificate(calibrater_user_id, calibrater_tech
     # ---------------------------
     # 3. Process technician for each role using caching.
     # ---------------------------
-    # Create cache keys. Use a tuple: (role, new_user_id, original_technician_id)
-    calib_cache_key = ("calibration", new_calibrater_user_id, calibrater_technician_id)
-    install_cache_key = ("installation", new_installer_user_id, installer_technician_id)
-
     calibration_technician = None
     installation_technician = None
 
-    # -- Calibration Technician --
-    if calib_cache_key in TECHNICIAN_CACHE:
-        calibration_technician = TECHNICIAN_CACHE[calib_cache_key]['tech']
-    else:
-        # (a) If a technician ID was provided, try to find the mapped technician.
-        if calibrater_technician_id is not None:
-            for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
-                try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(calibrater_technician_id):
-                        calibration_technician = Technician.get_by_id(int(new_tech_id))
-                        break
-                except Exception:
-                    continue
-        # (b) If not found (or no technician ID provided), try to get an existing technician by email.
-        if not calibration_technician:
-            calibration_technician = Technician.get_or_none(Technician.email == calibrater_user.email)
-            # (c) If still not found, create a new technician record.
-            if not calibration_technician:
-                tech_user_id = calibrater_user.parent_id if calibrater_user.parent_id else calibrater_user.id
-                calibration_technician = Technician.create(
-                    name=calibrater_user.name,
-                    email=calibrater_user.email,
-                    phone=calibrater_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=calibrater_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
-            # Update technician mapping immediately.
-            with TECHNICIAN_MAPPING_LOCK:
-                mappings["technician"][str(calibration_technician.id)] = {
-                    "old_technician_id": calibrater_technician_id if calibrater_technician_id else 0,
-                    "user_id": new_calibrater_user_id,
-                }
-                save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
-        # Cache the result.
-        TECHNICIAN_CACHE[calib_cache_key] = {'tech': calibration_technician, 'user': calibrater_user}
+    # Helper function to get or create technician
+    def process_technician(user, technician_id, role):
+        # Try to find in cache first
+        cache_key = (role, user.id, technician_id)
+        if cache_key in TECHNICIAN_CACHE:
+            return TECHNICIAN_CACHE[cache_key]['tech']
 
-    # -- Installation Technician --
-    if install_cache_key in TECHNICIAN_CACHE:
-        installation_technician = TECHNICIAN_CACHE[install_cache_key]['tech']
-    else:
-        if installer_technician_id is not None:
+        technician = None
+        
+        # Try to find mapped technician
+        if technician_id is not None:
             for new_tech_id, tech_mapping in mappings.get("technician", {}).items():
                 try:
-                    if int(tech_mapping.get("old_technician_id", 0)) == int(installer_technician_id):
-                        installation_technician = Technician.get_by_id(int(new_tech_id))
+                    if int(tech_mapping.get("old_technician_id", 0)) == int(technician_id):
+                        technician = Technician.get_by_id(int(new_tech_id))
                         break
                 except Exception:
                     continue
-        if not installation_technician:
-            installation_technician = Technician.get_or_none(Technician.email == installer_user.email)
-            if not installation_technician:
-                tech_user_id = installer_user.parent_id if installer_user.parent_id else installer_user.id
-                installation_technician = Technician.create(
-                    name=installer_user.name,
-                    email=installer_user.email,
-                    phone=installer_user.phone or "0000000000",
-                    user_id=tech_user_id,
-                    created_by=installer_user.id,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
+
+        # Try to find by email
+        if not technician:
+            technician = Technician.get_or_none(Technician.email == user.email)
+
+        # Create new if not found
+        if not technician:
+            tech_user_id = user.parent_id if user.parent_id else user.id
+            technician = Technician.create(
+                name=user.name,
+                email=user.email,
+                phone=user.phone or "0000000000",
+                dealer_id=tech_user_id,
+                created_by=user.id,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+            
+            # Update mappings and cache
             with TECHNICIAN_MAPPING_LOCK:
-                mappings["technician"][str(installation_technician.id)] = {
-                    "old_technician_id": installer_technician_id if installer_technician_id else 0,
-                    "user_id": new_installer_user_id,
+                mappings["technician"][str(technician.id)] = {
+                    "old_technician_id": technician_id if technician_id else 0,
+                    "user_id": user.id,
                 }
                 save_mappings(TECHNICIAN_MAPPING_FILE, mappings["technician"])
-        TECHNICIAN_CACHE[install_cache_key] = {'tech': installation_technician, 'user': installer_user}
+                
+                # Update cache for all possible keys
+                TECHNICIAN_CACHE[(role, user.id, technician_id)] = {'tech': technician, 'user': user}
+                TECHNICIAN_CACHE[(role, user.id, None)] = {'tech': technician, 'user': user}
+                if technician_id:
+                    TECHNICIAN_CACHE[(role, user.id, 0)] = {'tech': technician, 'user': user}
+
+        return technician
+
+    # Process both technicians
+    calibration_technician = process_technician(calibrater_user, calibrater_technician_id, "calibration")
+    installation_technician = process_technician(installer_user, installer_technician_id, "installation")
 
     return calibration_technician, installation_technician, calibrater_user, installer_user
 
