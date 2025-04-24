@@ -469,23 +469,19 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
             brand = vehicle_brand_model[0]
             model = vehicle_brand_model[1] if len(vehicle_brand_model) > 1 else brand
             try:
-                vehicle, created = Vehicle.get_or_create(
+                # Always create a new vehicle record
+                vehicle = Vehicle.create(
+                    brand=brand,
+                    model=model,
+                    vehicle_no=record.vehicle_registration,
                     vehicle_chassis_no=record.vehicle_chassis,
-                    defaults={
-                        "brand": brand,
-                        "model": model,
-                        "vehicle_no": record.vehicle_registration,
-                        "new_registration": False
-                    }
+                    new_registration=False
                 )
-            except IntegrityError as ie:
-                try:
-                    vehicle = Vehicle.get(vehicle_chassis_no=record.vehicle_chassis)
-                except Exception as e:
-                    errors.append(f"Vehicle creation failed: {e.__class__.__name__}: {str(e)}")
-                    vehicle = None
+            except Exception as e:
+                errors.append(f"Vehicle creation failed: {e.__class__.__name__}: {str(e)}")
+                vehicle = None
         else:
-            vehicle = Vehicle.get_or_none(vehicle_chassis_no=record.vehicle_chassis)
+            vehicle = None
     except Exception as e:
         errors.append(f"Error processing vehicle: {e.__class__.__name__}: {str(e)}")
         vehicle = None
