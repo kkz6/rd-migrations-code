@@ -237,11 +237,18 @@ def migrate_single_technician_data(record, new_user_id):
             updated_at=record.add_date,
         )
         
-        # Create technician_user relationship
-        TechnicianUser.create(
-            technician_id=technician.id,
-            user_id=created_by_field
+        # Check if technician_user relationship already exists before creating
+        existing_relationship = TechnicianUser.get_or_none(
+            (TechnicianUser.technician_id == technician.id) &
+            (TechnicianUser.user_id == created_by_field)
         )
+        
+        if not existing_relationship:
+            # Create technician_user relationship if it doesn't exist
+            TechnicianUser.create(
+                technician_id=technician.id,
+                user_id=created_by_field
+            )
         
         return technician.id
     except Exception as e:
@@ -271,10 +278,17 @@ def migrate_technicians(automated=False):
     user_mappings = load_user_mappings()
     technicians_mappings = load_technicians_mappings()
 
+    # Create a set to track technician-user relationships
+    technician_user_relationships = set()
+
     try:
         if automated:
             print("Starting Fully Automated Migration")
             progress_bar = tqdm(total=total_records, desc="Migrating Technicians", ncols=100, colour="green")
+            
+            # First, collect all existing technician-user relationships
+            for relationship in TechnicianUser.select():
+                technician_user_relationships.add((relationship.technician_id, relationship.user_id))
             
             for record in TechnicianMaster.select():
                 # Check if already migrated
@@ -298,6 +312,14 @@ def migrate_technicians(automated=False):
 
                 try:
                     new_id = migrate_single_technician_data(record, new_user_id)
+                    
+                    # Get the created_by field for the relationship
+                    dest_user = DestinationUser.get_by_id(new_user_id)
+                    created_by_field = dest_user.parent_id if dest_user.parent_id is not None else dest_user.id
+                    
+                    # Add to our tracking set
+                    technician_user_relationships.add((new_id, created_by_field))
+                    
                     technicians_mappings[new_id] = {"old_technician_id": record.id, "dealer_id": new_user_id}
                     save_technicians_mappings(technicians_mappings)
                     migrated_data.append({
@@ -355,6 +377,14 @@ def migrate_technicians(automated=False):
                 if proceed:
                     try:
                         new_id = migrate_single_technician_data(record, new_user_id)
+                        
+                        # Get the created_by field for the relationship
+                        dest_user = DestinationUser.get_by_id(new_user_id)
+                        created_by_field = dest_user.parent_id if dest_user.parent_id is not None else dest_user.id
+                        
+                        # Add to our tracking set
+                        technician_user_relationships.add((new_id, created_by_field))
+                        
                         technicians_mappings[new_id] = {"old_technician_id": record.id, "dealer_id": new_user_id}
                         save_technicians_mappings(technicians_mappings)
                         migrated_data.append({
