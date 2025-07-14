@@ -27,7 +27,7 @@ from dest_db import dest_db
 
 # Constants
 MAPPING_FILE_PATH = "user_mappings.json"
-DEFAULT_PASSWORD_HASH = "$2y$10$4sCgBDych20ZjQ8EY/z4SOKNRObHjl6LWe02OmI3Ht4cktxPHNAmC"
+DEFAULT_PASSWORD_HASH = "$2y$12$dBmyHYZEBS72MrZ2704RF.dw3X2RFaE49y0X6FXR1mO47ehjggIqu"
 DEFAULT_TIMEZONE = "UTC"
 
 
