@@ -13,7 +13,7 @@ from models.customers_model import Customer
 from models.technicians_model import Technician
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
-from pytz import timezone, UTC
+
 from tqdm import tqdm
 import traceback
 
@@ -32,27 +32,7 @@ CUSTOMER_CACHE = {}
 USER_CACHE = {}
 TECHNICIAN_CACHE = {}  # key: (role, user_id, old_technician_id) to Technician instance
 
-def convert_uae_to_utc(uae_dt):
-    """Convert a datetime object from UAE timezone to UTC.
-    
-    If the datetime object is naive (i.e. no timezone info),
-    it is assumed to be in the UAE (Asia/Dubai) timezone.
-    """
-    if not uae_dt:
-        return None
-    try:
-        uae_tz = timezone("Asia/Dubai")  # UAE follows Dubai timezone
-        
-        # If datetime is naive, localize it to UAE timezone.
-        if uae_dt.tzinfo is None:
-            uae_dt = uae_tz.localize(uae_dt)
-        
-        # Convert to UTC
-        dt_utc = uae_dt.astimezone(UTC)
-        return dt_utc
-    except Exception as e:
-        print(f"Time conversion error for {uae_dt}: {e}")
-        return None
+
 
 def save_to_excel(migrated: List[dict], unmigrated: List[dict]):
     if not migrated and not unmigrated:
@@ -517,10 +497,10 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "serial_number": record.serialno,
         "status": status,
         "device_id": device_id,
-        "installation_date": convert_uae_to_utc(record.date_installation),
-        "calibration_date": convert_uae_to_utc(record.date_calibrate),
-        "expiry_date": convert_uae_to_utc(record.date_expiry),
-        "cancellation_date": convert_uae_to_utc(record.date_cancelation),
+        "installation_date": record.date_installation,
+        "calibration_date": record.date_calibrate,
+        "expiry_date": record.date_expiry,
+        "cancellation_date": record.date_cancelation,
         "cancelled": (record.date_cancelation is not None),
         "calibrated_by_id": calibration_technician.id,
         "installed_by_id": installation_technician.id,
