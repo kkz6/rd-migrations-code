@@ -92,7 +92,7 @@ ecm_mapping = {
         "device_variant": "",
         "approval_code": "24-01-22783/Q24-01-048944/NB0002",
     },
-    "ADS": {
+    "ASL": {
         "device_type": "Adaptive Speed Limiter",
         "device_model": "Resolute Dynamics ASL",
         "device_variant": "",
