@@ -74,24 +74,33 @@ fi
 
 # Check database connectivity
 print_status "Checking database connectivity..."
-if mysql -u root --password="" -e "SELECT 1;" 2>/dev/null; then
+if mysql -u root -e "SELECT 1;" 2>/dev/null; then
     print_success "MySQL connection successful (no password)"
+    MYSQL_CMD="mysql -u root"
+elif mysql -u root --password="" -e "SELECT 1;" 2>/dev/null; then
+    print_success "MySQL connection successful (empty password)"
+    MYSQL_CMD="mysql -u root --password=''"
 else
     print_warning "MySQL connection failed. You may need to set a password or check credentials."
+    MYSQL_CMD=""
 fi
 
-# Check if databases exist
-print_status "Checking databases..."
-if mysql -u root --password="" -e "USE resolutedynam9_cms;" 2>/dev/null; then
-    print_success "Source database (resolutedynam9_cms) exists"
-else
-    print_warning "Source database (resolutedynam9_cms) not found"
-fi
+# Check if databases exist (only if we have a working connection)
+if [ -n "$MYSQL_CMD" ]; then
+    print_status "Checking databases..."
+    if $MYSQL_CMD -e "USE resolutedynam9_cms;" 2>/dev/null; then
+        print_success "Source database (resolutedynam9_cms) exists"
+    else
+        print_warning "Source database (resolutedynam9_cms) not found"
+    fi
 
-if mysql -u root --password="" -e "USE rd_cms_migrated;" 2>/dev/null; then
-    print_success "Destination database (rd_cms_migrated) exists"
+    if $MYSQL_CMD -e "USE rd_cms_migrated;" 2>/dev/null; then
+        print_success "Destination database (rd_cms_migrated) exists"
+    else
+        print_warning "Destination database (rd_cms_migrated) not found"
+    fi
 else
-    print_warning "Destination database (rd_cms_migrated) not found"
+    print_warning "Skipping database checks due to connection issues"
 fi
 
 # Check required files

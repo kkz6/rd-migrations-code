@@ -106,6 +106,22 @@ install_system_dependencies() {
     print_success "System dependencies installed successfully"
 }
 
+# Function to detect MySQL password setup
+detect_mysql_auth() {
+    print_status "Detecting MySQL authentication setup..."
+    
+    if mysql -u root -e "SELECT 1;" 2>/dev/null; then
+        print_success "MySQL allows connection without password"
+        return 0
+    elif mysql -u root --password="" -e "SELECT 1;" 2>/dev/null; then
+        print_success "MySQL uses empty password"
+        return 1
+    else
+        print_warning "MySQL requires a password"
+        return 2
+    fi
+}
+
 # Function to setup MySQL
 setup_mysql() {
     print_status "Setting up MySQL..."
@@ -138,15 +154,44 @@ setup_mysql() {
     # Create databases if they don't exist
     print_status "Creating databases..."
     
-    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS resolutedynam9_cms;" 2>/dev/null || {
-        print_warning "Could not create source database. You may need to create it manually."
-        print_warning "Run: CREATE DATABASE IF NOT EXISTS resolutedynam9_cms;"
+    # Function to try MySQL connection with different password options
+    try_mysql_connection() {
+        local command="$1"
+        
+        # First try without password
+        if mysql -u root -e "$command" 2>/dev/null; then
+            return 0
+        fi
+        
+        # If that fails, try with empty password explicitly
+        if mysql -u root --password="" -e "$command" 2>/dev/null; then
+            return 0
+        fi
+        
+        # If that fails, prompt for password
+        print_status "MySQL requires a password. Please enter your MySQL root password:"
+        if mysql -u root -p -e "$command" 2>/dev/null; then
+            return 0
+        fi
+        
+        return 1
     }
     
-    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS rd_cms_migrated;" 2>/dev/null || {
+    # Try to create source database
+    if try_mysql_connection "CREATE DATABASE IF NOT EXISTS resolutedynam9_cms;"; then
+        print_success "Source database (resolutedynam9_cms) created/verified"
+    else
+        print_warning "Could not create source database. You may need to create it manually."
+        print_warning "Run: CREATE DATABASE IF NOT EXISTS resolutedynam9_cms;"
+    fi
+    
+    # Try to create destination database
+    if try_mysql_connection "CREATE DATABASE IF NOT EXISTS rd_cms_migrated;"; then
+        print_success "Destination database (rd_cms_migrated) created/verified"
+    else
         print_warning "Could not create destination database. You may need to create it manually."
         print_warning "Run: CREATE DATABASE IF NOT EXISTS rd_cms_migrated;"
-    }
+    fi
 }
 
 # Function to setup Python environment
@@ -234,10 +279,13 @@ verify_installation() {
     done
     
     # Check MySQL connection
-    if mysql -u root -p -e "SELECT 1;" 2>/dev/null; then
-        print_success "MySQL connection successful"
+    print_status "Testing MySQL connection..."
+    if mysql -u root -e "SELECT 1;" 2>/dev/null; then
+        print_success "MySQL connection successful (no password)"
+    elif mysql -u root --password="" -e "SELECT 1;" 2>/dev/null; then
+        print_success "MySQL connection successful (empty password)"
     else
-        print_warning "MySQL connection failed. Please check your credentials."
+        print_warning "MySQL connection requires password or failed. Please verify your credentials."
     fi
     
     print_success "Installation verification complete"
@@ -272,9 +320,10 @@ display_final_instructions() {
     echo "============================================================================="
     echo ""
     echo "Next steps:"
-    echo "1. Update database passwords in config.py (if needed)"
-    echo "2. Ensure your source database (resolutedynam9_cms) has data"
-    echo "3. Run the migration using: ./run_migration.sh"
+    echo "1. Update database passwords in source_db.py and dest_db.py (if MySQL requires password)"
+    echo "2. Update database passwords in config.py (if needed)"
+    echo "3. Ensure your source database (resolutedynam9_cms) has data"
+    echo "4. Run the migration using: ./run_migration.sh"
     echo ""
     echo "Available migration options:"
     echo "- Users migration"
@@ -328,6 +377,17 @@ main() {
     
     # Setup MySQL
     setup_mysql
+    
+    # Detect MySQL authentication after setup
+    detect_mysql_auth
+    mysql_auth_result=$?
+    
+    if [ $mysql_auth_result -eq 2 ]; then
+        print_warning "MySQL requires a password. You'll need to update the database configuration files:"
+        print_warning "- Update source_db.py with your MySQL password"
+        print_warning "- Update dest_db.py with your MySQL password"
+        echo ""
+    fi
     
     # Setup Python environment
     setup_python_environment
