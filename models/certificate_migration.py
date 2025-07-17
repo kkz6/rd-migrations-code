@@ -13,6 +13,7 @@ from models.customers_model import Customer
 from models.technicians_model import Technician
 from models.vehicles_model import Vehicle
 from models.users_model import DestinationUser
+from models.timezone_utils import convert_ist_to_utc
 
 from tqdm import tqdm
 import traceback
@@ -497,10 +498,10 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "serial_number": record.serialno,
         "status": status,
         "device_id": device_id,
-        "installation_date": record.date_installation,
-        "calibration_date": record.date_calibrate,
-        "expiry_date": record.date_expiry,
-        "cancellation_date": record.date_cancelation,
+        "installation_date": convert_ist_to_utc(record.date_installation),
+        "calibration_date": convert_ist_to_utc(record.date_calibrate),
+        "expiry_date": convert_ist_to_utc(record.date_expiry),
+        "cancellation_date": convert_ist_to_utc(record.date_cancelation),
         "cancelled": (record.date_cancelation is not None),
         "calibrated_by_id": calibration_technician.id,
         "installed_by_id": installation_technician.id,
@@ -515,8 +516,8 @@ def migrate_certificate(record, mappings, certificate_mappings, batch_mode=False
         "description": record.description,
         "dealer_id": dealer_id_val if 'dealer_id_val' in locals() else None,
         "user_id": user_id_val if 'user_id_val' in locals() else None,
-        "created_at": record.date_calibrate,
-        "updated_at": record.date_calibrate,
+        "created_at": convert_ist_to_utc(record.date_calibrate),
+        "updated_at": convert_ist_to_utc(record.date_calibrate),
     }
 
     export_data = {
